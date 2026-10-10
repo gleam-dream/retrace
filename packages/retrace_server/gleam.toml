@@ -1,0 +1,15 @@
+name = "retrace_server"
+version = "0.1.0"
+target = "erlang"
+licences = ["MIT"]
+description = "PostgreSQL session ingestion, indexing and S3 archival for retrace"
+
+[dependencies]
+retrace = { path = "../.." }
+gleam_stdlib = ">= 1.0.0 and < 2.0.0"
+gleam_json = ">= 3.1.0 and < 4.0.0"
+gleam_erlang = ">= 1.0.0 and < 2.0.0"
+gleam_http = ">= 4.0.0 and < 5.0.0"
+gleam_httpc = ">= 5.0.0 and < 6.0.0"
+pog = "== 4.1.0"
+bucket = "== 1.4.0"

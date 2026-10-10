@@ -1,0 +1,4 @@
+identifier = "default"
+description = "Example window with a persistent local recording queue"
+windows = ["main"]
+permissions = ["core:default", "store:default"]

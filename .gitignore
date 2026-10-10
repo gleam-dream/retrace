@@ -1,0 +1,15 @@
+**/build/
+**/node_modules/
+**/target/
+**/dist/
+.direnv/
+**/.render/
+.artifacts/
+.local/
+erl_crash.dump
+.DS_Store
+.env
+.env.*
+!.env.example
+
+**/src-tauri/gen/schemas/
