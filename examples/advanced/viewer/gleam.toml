@@ -1,0 +1,6 @@
+name = "retrace_viewer_example"
+version = "0.1.0"
+target = "javascript"
+[dependencies]
+retrace_example = { path = ".." }
+retrace_viewer = { path = "../../../packages/retrace_viewer" }

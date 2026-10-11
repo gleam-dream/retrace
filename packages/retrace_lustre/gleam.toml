@@ -1,0 +1,11 @@
+name = "retrace_lustre"
+version = "0.1.0"
+target = "javascript"
+licences = ["MIT"]
+description = "Experimental typed replay modules and inert Lustre frames for Retrace"
+[dependencies]
+retrace_client = { path = "../retrace_client" }
+retrace = { path = "../.." }
+gleam_stdlib = ">= 1.0.0 and < 2.0.0"
+gleam_json = "== 3.1.0"
+lustre = "== 5.7.1"

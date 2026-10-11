@@ -13,3 +13,7 @@ erl_crash.dump
 !.env.example
 
 **/src-tauri/gen/schemas/
+
+**/src-tauri/gen/apple/
+
+/examples/advanced/viewer/public/artifacts/

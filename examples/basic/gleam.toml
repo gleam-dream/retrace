@@ -1,0 +1,11 @@
+name = "retrace_inventory"
+version = "0.1.0"
+target = "javascript"
+[dependencies]
+retrace_viewer = { path = "../../packages/retrace_viewer" }
+retrace = { path = "../.." }
+retrace_client = { path = "../../packages/retrace_client" }
+retrace_lustre = { path = "../../packages/retrace_lustre" }
+gleam_stdlib = ">= 1.0.0 and < 2.0.0"
+gleam_json = "== 3.1.0"
+lustre = "== 5.7.1"

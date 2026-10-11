@@ -1,0 +1,12 @@
+{
+  "name": "retrace-basic",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "gleam build && vite --host 127.0.0.1 --port 5193 --strictPort",
+    "build": "gleam build && vite build"
+  },
+  "devDependencies": {
+    "vite": "8.3.4"
+  }
+}

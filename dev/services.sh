@@ -36,7 +36,7 @@ for _ in $(seq 1 60); do
 done
 kill -0 "$object_pid" || { tail -30 "$service_root/logs/seaweed.log"; exit 1; }
 if [[ "${1:-}" = "--" ]]; then shift; "$@"; exit; fi
-cd "$project_root/examples/collector"
+cd "$project_root/support/collector"
 gleam run &
 collector_pid=$!
 wait "$collector_pid"

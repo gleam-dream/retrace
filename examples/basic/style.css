@@ -1,0 +1,71 @@
+* {
+  box-sizing: border-box;
+}
+body {
+  margin: 0;
+  color: #18362e;
+  background: #f4f3ed;
+  font:
+    16px system-ui,
+    sans-serif;
+}
+.inventory {
+  padding: 40px;
+  min-height: 480px;
+}
+header p {
+  font-size: 12px;
+  letter-spacing: 0.12em;
+}
+h1 {
+  font-size: 40px;
+  margin: 14px 0 40px;
+}
+.quantities {
+  display: flex;
+  gap: 50px;
+}
+h2 {
+  font-size: 14px;
+  font-weight: 500;
+}
+output {
+  font-size: 64px;
+  font-weight: 600;
+}
+nav {
+  display: flex;
+  gap: 12px;
+  margin: 36px 0;
+}
+button {
+  font: inherit;
+  border: 1px solid #527969;
+  background: #fff;
+  padding: 12px 20px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+button:first-child {
+  background: #21513e;
+  color: white;
+}
+button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.note,
+footer {
+  color: #50635a;
+  font-size: 14px;
+}
+footer {
+  padding: 0 40px 20px;
+}
+a {
+  color: #21513e;
+}
+:focus-visible {
+  outline: 3px solid #b88d12;
+  outline-offset: 3px;
+}

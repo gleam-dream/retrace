@@ -7,104 +7,65 @@ This is a new local project on `feat/initial-replay`. Nothing is published to He
 or submitted upstream. It is an initial working implementation, with deployment
 policy still owned by the application.
 
-## Run the example
+For the Gleam capture and viewer integration, see the
+[adoption journey](docs/adopting-lustre.md).
 
-From this repository, enter the development shell:
+## Choose an example
+
+There are exactly two application examples:
+
+| Example                                 | Purpose                                                                                                      |
+| --------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| [Basic](examples/basic/README.md)       | Browser capture and replay using library defaults, with no handwritten FFI or native dependencies            |
+| [Advanced](examples/advanced/README.md) | Tauri/native integration, immutable replay artifacts, and custom storage/transport/viewer-source composition |
+
+Start with basic. From the repository root:
 
 ```sh
 nix develop
-lefthook install
-```
-
-The flake and basic tooling follow the sibling `sinal` repository. The shell adds
-Node, Rustup, PostgreSQL and SeaweedFS for these examples. Tauri also requires the
-host platform tools: Xcode on macOS; Android SDK/NDK for Android. Rustup uses your
-installed default Rust toolchain; the Nix lock does not pin that toolchain.
-
-In terminal one:
-
-```sh
 bash dev/services.sh
 ```
 
-This starts repository-owned PostgreSQL on `127.0.0.1:5547`, an S3-compatible
-SeaweedFS service on `127.0.0.1:8337`, and a Mist collector on
-`127.0.0.1:4417`. Data survives restarts in ignored `.local/`. Ctrl-C stops the
-services started by the script. The local fixture credentials are in the script;
-no AWS account or existing database is used.
-
-In terminal two, also inside `nix develop`:
+In another terminal inside Nix:
 
 ```sh
-cd examples/app
+cd examples/basic
 npm ci
-npm run build:gleam
 npm run dev
 ```
 
-Open **http://127.0.0.1:5190/?user=Ada**. Add points, change the layout, or read
-device information. “Record an unchanged state” demonstrates that recording tracks
-messages even when application state is unchanged. Browse sessions, filter by
-user reference, select a recording, and step through it. A page reload starts a
-new session while delivering any saved batches from previous sessions.
+Open **http://127.0.0.1:5193/**. Change inventory, then follow **Inspect this
+recording**. Its live app, viewer and replay frame have separate entrypoints.
+The shared collector is development tooling under `support/collector`; its PostgreSQL
+and S3-compatible services keep local data in ignored `.local/`.
 
-For Tauri desktop, stop the Vite command and use:
-
-```sh
-npm run tauri -- dev
-```
-
-For an embedded frontend build:
-
-```sh
-npm run tauri -- build --debug --no-bundle
-./src-tauri/target/debug/retrace-example
-```
-
-The native app uses the Tauri store plugin for its queue and a real Rust command
-for device information. The browser uses IndexedDB and labels its browser result.
-Both send the same format to the same collector and use the same session viewer.
-
-### iOS and Android
-
-The Rust entry point supports Tauri mobile, but this new example has not yet been
-installed or validated on a phone. Generate the platform projects on a suitably
-configured host with `npm run tauri -- ios init` or `npm run tauri -- android init`,
-then use the corresponding `ios dev` or `android dev` command. Signing and the
-platform SDKs are required separately.
-
-`127.0.0.1` on a physical phone is the phone itself. Device deployment needs a
-reachable HTTPS collector URL via `VITE_RETRACE_ENDPOINT`, matching Tauri CSP
-configuration, and a host with authentication and authorization. The supplied
-collector deliberately binds to loopback and is for local development. Simulator
-and device runs are separate evidence from the desktop example.
+See the [examples index](examples/README.md) for both paths and the
+[adoption guide](docs/adopting-lustre.md) for integrating an existing application.
+The [advanced README](examples/advanced/README.md) covers ports 5190/5191, Tauri,
+custom adapters and immutable builds. Browser and Simulator evidence are separate;
+no physical-phone deployment is claimed by these examples.
 
 ## Package boundaries
 
-| Location                  | Responsibility                                                | Runtime owner                                           |
-| ------------------------- | ------------------------------------------------------------- | ------------------------------------------------------- |
-| `src/retrace.gleam`       | Typed sequence, checkpoint, deterministic replay and recovery | Application supplies state, messages, reducer and clock |
-| `src/retrace/wire.gleam`  | Versioned JSON envelope, limits and validation                | Application supplies safe payload codecs                |
-| `packages/retrace_client` | Bounded local persistence, retry, exact acknowledgement       | Host starts/stops the JavaScript client                 |
-| `packages/retrace_server` | PostgreSQL admission/indexing, archive and retrieval          | Host supplies pool, store and worker lifetime           |
-| `examples/collector`      | Mist HTTP routes and archive loop                             | Local service script                                    |
-| `examples/app`            | Shared Lustre live app, viewer and Tauri shell                | Browser or native shell                                 |
-| `examples/server_checks`  | Separate consumer exercising storage failure/recovery         | Disposable test database                                |
-| `vendor/timetravel`       | Pinned optional viewer inspector                              | Example only                                            |
+| Package          | Owns                                                               | Application supplies                                       |
+| ---------------- | ------------------------------------------------------------------ | ---------------------------------------------------------- |
+| `retrace`        | Typed recording, checkpoints, reconstruction and wire validation   | Model, event types, safe codecs and pure reducer           |
+| `retrace_client` | Bounded persistence, delivery, retry and receipt validation        | Endpoint, storage/transport selection and runtime lifetime |
+| `retrace_lustre` | Capture hook, typed replay module, inert frame and viewport helper | Existing update/effects, full view and safe projection     |
+| `retrace_viewer` | Default UI, styles, playback and cancellable reads                 | Source, artifact resolver, configuration and host lifetime |
+| `retrace_server` | Atomic admission, indexing, archive and retrieval                  | Database pool, object store and worker lifetime            |
 
-The root package has no Lustre, Tauri, PostgreSQL or network dependency. Clients
-and collectors do not depend on Time Travel. Its fork supplies inspection and
-navigation in the example viewer; [provenance](vendor/timetravel/PROVENANCE.md)
-records the revision and license. Retrace owns the recording protocol and delivery.
+The root package has no Lustre, Tauri, database or network dependency. Customers
+can compose these packages independently. The two examples import public APIs;
+advanced configuration replaces adapters without forking shared validation.
+[Attribution and revision provenance](THIRD_PARTY.md) remain after retiring the
+unused Time Travel vendor sources.
 
 ```text
-Live app → projected message + checkpoint → durable client queue
-                                              │ HTTP batch / durable receipt
-                                              ▼
-Viewer ← session search / stored batches ← Mist + PostgreSQL
-                                              │ retryable gzip upload
-                                              ▼
-                                         S3-compatible store
+Live app → safe message + checkpoint → durable client queue
+                                               │ transport + receipt
+                                               ▼
+Viewer ← source + artifact resolver ← collector / custom archive
 ```
 
 ## Portable core
@@ -127,9 +88,9 @@ assert retrace.model(player) == 3
 
 See [the consumer tests](test/retrace_test.gleam) for application-native types,
 checkpoint resume, typed reducer failure, incompatible contracts and gap recovery.
-The shared app's [domain module](examples/app/src/retrace_example/domain.gleam)
-contains its actual model/message codecs; [viewer](examples/app/src/retrace_example/viewer.gleam)
-reconstructs the model using only the pure reducer. It never invokes application
+The shared app's [domain module](examples/advanced/src/retrace_example/domain.gleam)
+contains its actual model/message codecs; its [replay module](examples/advanced/src/retrace_example/replay.gleam)
+connects them to the optional Lustre companion. Reconstruction uses the pure reducer. It never invokes application
 effects. Native results become ordinary messages before capture.
 
 Choose replay-safe state and events **before** encoding. State formatters in a
@@ -182,26 +143,39 @@ Local HTTP routes:
 | `POST /archive`                     | Attempt one archive; example worker also calls this operation |
 | `GET /health`                       | Listener liveness                                             |
 
+## Preserve replay across application releases
+
+The [application build guide](docs/application-builds.md) documents how to inject
+build identity after Git checkout, preserve replay artifacts, and associate them
+with recordings. It links the maintained application build recipe and a recommended CI
+release sequence. Build scripts remain application-owned; no builder package or
+new public API is introduced.
+
 ## Checks
 
 Inside the Nix shell:
 
 ```sh
 bash dev/check.sh                 # both core targets, consumer builds, web bundle
-# With dev/services.sh and Vite running:
+# With dev/services.sh, app (5190) and viewer (5191) running:
 python3 dev/backend-check.py      # real PostgreSQL + signed local S3 requests
 bash dev/server-check.sh          # isolated DB; injected archive failures/recovery
-node dev/browser-check.mjs        # offline reload, queue recovery, search, inert replay
+node dev/browser-check.mjs        # offline queue, full view, timing, inert replay
+node dev/basic-browser-check.mjs       # default browser consumer (5193)
+node dev/composition-browser-check.mjs # advanced custom adapters (5190)
+node dev/viewer-api-browser-check.mjs  # cancellation, remount, typed viewport (5193)
+node --test packages/retrace_viewer/test/*.test.mjs
+node --test examples/advanced/dev/history.test.mjs
 ```
 
-If Playwright's Chromium is missing, install it from `examples/app` with
+If Playwright's Chromium is missing, install it from `examples/advanced` with
 `npx playwright install chromium`. Browser checks retain screenshots in
 `.artifacts/` and create disposable example sessions in the development backend.
 
 Native runtime check (macOS arm64, local collector running):
 
 ```sh
-cd examples/app
+cd examples/advanced
 npm run tauri -- build --debug --no-bundle --features native-smoke
 RETRACE_NATIVE_SMOKE=1 ./src-tauri/target/debug/retrace-example
 ```
@@ -224,11 +198,11 @@ nix run .#design-gate-context -- docs/design --estimate
 
 ## Current limits
 
-This first implementation records semantic state and messages, not video or
-arbitrary screens. The inspector retains the newest 200 transitions; it verifies
-the loaded history first, and plays fixed-duration steps rather than recorded
-wall-clock timing. The example caps retrieval at 5,000 batches. Event payload
-search, aggregation and analytics are not implemented.
+This implementation records semantic state and messages, not video or arbitrary
+screens. The default viewer preserves recorded elapsed time and retains at most
+5,000 entries plus the starting checkpoint. Range reads are paged, but snapshots
+within the selected range are retained eagerly. Live tailing, lazy seeking,
+event-payload search and analytics are not implemented.
 
 The initial client uses fixed retry delays and one upload loop. A permanently
 rejected batch blocks later uploads in that queue. Applications need a policy
@@ -241,3 +215,17 @@ The local S3 test is not an AWS deployment or power-failure durability test.
 
 See the [design](docs/design/design.typ), [rendered design](docs/design/design-layer.pdf),
 [vocabulary](docs/design/CONTEXT.typ) and [decision](docs/adr/0001-compose-recording-and-storage.md).
+
+## Replay composition experiment
+
+The optional [Lustre companion](packages/retrace_lustre/README.md) supplies a typed
+replay module and disposable inert frame. The [inventory consumer](examples/basic/README.md)
+proves fixed desktop presentation, custom labels, application-native errors and
+the default browser/HTTP adapters without importing membership code.
+The advanced example additionally proves replaceable local archive adapters. The existing membership
+app uses the same companion with recorded viewport changes.
+
+The [client adapter contract](packages/retrace_client/README.md) documents explicit
+Tauri selection, custom transport/storage and bounded pending capture. The viewer
+now requests bounded pages by absolute cursor; it still retains its selected
+range and is not a million-event UI.

@@ -1,0 +1,9 @@
+{
+  "name": "retrace-viewer-example",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "gleam build && ../node_modules/.bin/vite --host 127.0.0.1 --port 5191 --strictPort",
+    "build": "gleam build && ../node_modules/.bin/vite build"
+  }
+}

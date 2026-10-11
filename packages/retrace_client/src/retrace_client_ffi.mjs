@@ -1,44 +1,19 @@
+const size = (value) => new TextEncoder().encode(value).byteLength;
+export function checkCapacity(all, key, body, maxItems, maxBytes) {
+  const others = all.filter((row) => row.key !== key);
+  if (
+    others.length >= maxItems ||
+    others.reduce((n, row) => n + size(row.body), size(body)) > maxBytes
+  )
+    throw new Error("Recording queue is full");
+  const existing = all.find((row) => row.key === key);
+  if (existing && existing.body !== body)
+    throw new Error("Conflicting local batch");
+}
 // Host-owned delivery runtime. No application reducer, native effect, or UI.
 async function openStorage(name, maxItems, maxBytes) {
-  const size = (value) => new TextEncoder().encode(value).byteLength;
-  const check = (all, key, body) => {
-    const others = all.filter((row) => row.key !== key);
-    if (
-      others.length >= maxItems ||
-      others.reduce((n, row) => n + size(row.body), size(body)) > maxBytes
-    )
-      throw new Error("Recording queue is full");
-    const existing = all.find((row) => row.key === key);
-    if (existing && existing.body !== body)
-      throw new Error("Conflicting local batch");
-  };
-  if (globalThis.__TAURI_INTERNALS__) {
-    const { load } = await import("@tauri-apps/plugin-store");
-    const store = await load(`${name}.json`, { autoSave: false, defaults: {} });
-    const all = async () =>
-      (await store.entries()).map(([key, body]) => ({ key, body }));
-    let pending = Promise.resolve();
-    const serial = (run) => {
-      const result = pending.then(run);
-      pending = result.catch(() => {});
-      return result;
-    };
-    return {
-      all: () => serial(all),
-      put: (key, body) =>
-        serial(async () => {
-          check(await all(), key, body);
-          await store.set(key, body);
-          await store.save();
-        }),
-      remove: (key) =>
-        serial(async () => {
-          await store.delete(key);
-          await store.save();
-        }),
-      close() {},
-    };
-  }
+  const check = (all, key, body) =>
+    checkCapacity(all, key, body, maxItems, maxBytes);
   const db = await new Promise((resolve, reject) => {
     const request = indexedDB.open(name, 1);
     request.onupgradeneeded = () =>
@@ -87,11 +62,47 @@ async function openStorage(name, maxItems, maxBytes) {
   };
 }
 
+export const browserStorage = () => openStorage;
+// Transport returns an acknowledgement JSON string. Runtime owns its deadline.
+export const httpTransport = (endpoint) => async (body, signal) => {
+  const response = await fetch(`${endpoint.replace(/\/$/, "")}/batches`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body,
+    signal,
+  });
+  if (!response.ok)
+    throw Error(
+      response.status === 409
+        ? "Recording conflict; saved batch retained"
+        : "Collector unavailable; retrying",
+    );
+  return response.text();
+};
 export function start(endpoint, name, maxItems, maxBytes, onStatus) {
+  return startWith(
+    name,
+    maxItems,
+    maxBytes,
+    onStatus,
+    openStorage,
+    httpTransport(endpoint),
+  );
+}
+export function startWith(name, maxItems, maxBytes, onStatus, open, transport) {
   const valid =
-    /^[a-zA-Z0-9_-]{1,100}$/.test(name) && maxItems > 0 && maxBytes > 0;
+    /^[a-zA-Z0-9_-]{1,100}$/.test(name) &&
+    Number.isSafeInteger(maxItems) &&
+    maxItems > 0 &&
+    Number.isSafeInteger(maxBytes) &&
+    maxBytes > 0;
   const client = {
-    endpoint: endpoint.replace(/\/$/, ""),
+    transport,
+    maxItems,
+    maxBytes,
+    pendingItems: 0,
+    pendingBytes: 0,
+    writeFailed: false,
     onStatus,
     ack: 0,
     stopped: false,
@@ -102,7 +113,7 @@ export function start(endpoint, name, maxItems, maxBytes, onStatus) {
     controller: null,
   };
   client.storage = valid
-    ? openStorage(name, maxItems, maxBytes)
+    ? Promise.resolve().then(() => open(name, maxItems, maxBytes))
     : Promise.reject(new Error("Invalid queue configuration"));
   // Observe startup failures even when no event is ever enqueued.
   client.storage.then(
@@ -113,9 +124,22 @@ export function start(endpoint, name, maxItems, maxBytes, onStatus) {
 }
 
 export function enqueue(client, body, saved) {
+  const bytes = size(body);
+  if (
+    client.stopped ||
+    client.fault ||
+    client.pendingItems >= client.maxItems ||
+    client.pendingBytes + bytes > client.maxBytes
+  ) {
+    client.fault = true;
+    saved(false, "Capture stopped: pending queue full or runtime unavailable");
+    return;
+  }
+  client.pendingItems++;
+  client.pendingBytes += bytes;
   client.saving = client.saving
     .then(async () => {
-      if (client.stopped || client.fault)
+      if (client.writeFailed)
         throw new Error("Recording stopped after a persistence failure");
       const batch = JSON.parse(body);
       const key = `${batch.session.id}:${String(batch.checkpoint.sequence).padStart(16, "0")}`;
@@ -125,9 +149,14 @@ export function enqueue(client, body, saved) {
     })
     .catch((error) => {
       client.fault = true;
+      client.writeFailed = true;
       saved(false, error.message || "Recording persistence failed");
     })
-    .then(() => retry(client));
+    .finally(() => {
+      client.pendingItems--;
+      client.pendingBytes -= bytes;
+      retry(client);
+    });
 }
 
 export function retry(client) {
@@ -144,30 +173,20 @@ export function retry(client) {
       client.onStatus(rows.length, client.ack, "Uploading saved recording");
       client.controller = new AbortController();
       const timeout = setTimeout(() => client.controller?.abort(), 5000);
-      let response;
       try {
-        response = await fetch(`${client.endpoint}/batches`, {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: row.body,
-          signal: client.controller.signal,
-        });
+        const ack = JSON.parse(
+          await client.transport(row.body, client.controller.signal),
+        );
+        if (
+          ack.session_id !== batch.session.id ||
+          ack.ack !== batch.checkpoint.sequence + batch.entries.length
+        )
+          throw new Error("Invalid acknowledgement; saved batch retained");
       } finally {
         clearTimeout(timeout);
         client.controller = null;
       }
-      if (!response.ok)
-        throw new Error(
-          response.status === 409
-            ? "Recording conflict; saved batch retained"
-            : "Collector unavailable; retrying",
-        );
-      const ack = await response.json();
-      if (
-        ack.session_id !== batch.session.id ||
-        ack.ack !== batch.checkpoint.sequence + batch.entries.length
-      )
-        throw new Error("Invalid acknowledgement; saved batch retained");
+      if (client.stopped) break;
       await storage.remove(row.key);
       client.ack += batch.entries.length;
       rows = await storage.all();

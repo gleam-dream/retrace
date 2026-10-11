@@ -65,3 +65,44 @@ pub fn stop(client: Client) -> Nil
 
 @external(javascript, "./retrace_client_ffi.mjs", "retry")
 pub fn retry(client: Client) -> Nil
+
+/// A factory that opens caller-owned persistence. See the adapter contract in README.
+pub type Storage
+
+/// An abortable upload returning the acknowledgement JSON. No reducer runs here.
+pub type Transport
+
+@external(javascript, "./retrace_client_ffi.mjs", "browserStorage")
+pub fn browser_storage() -> Storage
+
+@external(javascript, "./retrace_client_ffi.mjs", "httpTransport")
+pub fn http_transport(endpoint: String) -> Transport
+
+/// Advanced entrypoint; the caller selects persistence and upload policy.
+pub fn start_with(
+  config: Config,
+  storage: Storage,
+  transport: Transport,
+  on_status: fn(Status) -> Nil,
+) -> Client {
+  start_with_runtime(
+    config.queue_name,
+    config.max_items,
+    config.max_bytes,
+    fn(queued, acknowledged, detail) {
+      on_status(Status(queued, acknowledged, detail))
+    },
+    storage,
+    transport,
+  )
+}
+
+@external(javascript, "./retrace_client_ffi.mjs", "startWith")
+fn start_with_runtime(
+  name: String,
+  max_items: Int,
+  max_bytes: Int,
+  on_status: fn(Int, Int, String) -> Nil,
+  storage: Storage,
+  transport: Transport,
+) -> Client
