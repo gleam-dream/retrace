@@ -35,6 +35,7 @@ Start with the [adoption guide](../../docs/adopting-lustre.md), then consult
 or [viewer configuration](docs/viewer.md).
 
 There are exactly two application examples: [basic](../../examples/basic/README.md)
-and [advanced](../../examples/advanced/README.md). This package is not yet published;
-use a local path dependency on `packages/retrace_frontend`. Declare `retrace` directly
-as well when your application imports the core or wire modules.
+and [advanced](../../examples/advanced/README.md). Install from the Git subdirectory
+`packages/retrace_frontend` following the [installation guide](../../docs/releases.md).
+Declare `retrace` directly as well when your application imports the core or wire
+modules, using the same Git revision. This package is experimental and is not on Hex.

@@ -11,4 +11,5 @@ relevant ADRs before changing public contracts. Preserve explicit runtime owners
   then `nix run .#design-gate-check -- docs/design .`.
 - Use only this repository's local development services; never read credential files.
 - Native builds, browser tests, database tests and remote-cloud tests are distinct evidence.
-- No publishing or upstream PR is part of the initial work.
+- GitHub distribution uses the release checks in `docs/releases.md`. Hex publishing
+  and upstream PRs require an explicit request.

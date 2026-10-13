@@ -1,5 +1,6 @@
 name = "retrace_server"
 version = "0.1.0"
+gleam = ">= 1.16.0"
 target = "erlang"
 licences = ["MIT"]
 description = "PostgreSQL session ingestion, indexing and S3 archival for retrace"
@@ -13,3 +14,9 @@ gleam_http = ">= 4.0.0 and < 5.0.0"
 gleam_httpc = ">= 5.0.0 and < 6.0.0"
 pog = "== 4.1.0"
 bucket = "== 1.4.0"
+
+[repository]
+type = "github"
+user = "gleam-dream"
+repo = "retrace"
+path = "packages/retrace_server"

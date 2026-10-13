@@ -22,11 +22,11 @@ selects the historical executable and styles.
 
 ## 2. Connect capture once
 
-Add one frontend dependency, using the relative path from your application:
+Add the frontend from Git (see [installation](releases.md) for core and server):
 
 ```toml
 [dependencies]
-retrace_frontend = { path = "../../packages/retrace_frontend" }
+retrace_frontend = { git = "https://github.com/gleam-dream/retrace.git", ref = "v0.1.0", path = "packages/retrace_frontend" }
 ```
 
 Keep direct `retrace`, `lustre` and codec dependencies where your application imports them.
@@ -172,5 +172,5 @@ Artifacts are trusted same-origin code, not a hostile-code sandbox.
 This is still an experimental, bounded replay API: 5,000 retained events by
 default, no lazy seek, live tail, automatic DOM capture or million-event UI claim.
 The collector search returns the latest 100 sessions; it has no search pagination.
-Both example workflows and failure/recovery checks must stay green before the
-interfaces are considered for publication.
+The example workflows and failure/recovery checks are retained as executable
+evidence; Git availability does not imply a stable or production-hardened API.

@@ -19,3 +19,6 @@
 recipe. `docs/testing-devices.md` and `dev/simulator/` distinguish Simulator
 runtime evidence from browser tests. `docs/replay-viewer.md` documents the shared
 viewer and fidelity limits. The examples index gives the two adoption paths.
+
+`docs/releases.md` documents Git installation and release checks;
+`dev/git-consumer-check.sh` retains independent Git distribution evidence.

@@ -3,9 +3,10 @@
 Record selected application messages, deliver them durably, and reconstruct sessions
 for inspection. The same Lustre example runs in a browser and a Tauri shell.
 
-This is a new local project on `feat/initial-replay`. Nothing is published to Hex
-or submitted upstream. It is an initial working implementation, with deployment
-policy still owned by the application.
+Retrace is experimental and distributed through this Git repository. Its APIs
+may change before 1.0; deployment policy remains application-owned.
+See [installation and release checks](docs/releases.md) for Git dependencies.
+The packages are not published to Hex.
 
 For the Gleam capture and viewer integration, see the
 [adoption journey](docs/adopting-lustre.md).
@@ -69,8 +70,8 @@ Viewer ← source + artifact resolver ← collector / custom archive
 
 ## Portable core
 
-Use local path dependencies until a release is published. Application types remain
-application types; JSON is needed only at the wire boundary.
+Install the core from Git using the [installation guide](docs/releases.md).
+Application types remain application types; JSON is needed only at the wire boundary.
 
 ```gleam
 import retrace
@@ -89,7 +90,7 @@ See [the consumer tests](test/retrace_test.gleam) for application-native types,
 checkpoint resume, typed reducer failure, incompatible contracts and gap recovery.
 The shared app's [domain module](examples/advanced/src/retrace_example/domain.gleam)
 contains its actual model/message codecs; its [replay module](examples/advanced/src/retrace_example/replay.gleam)
-connects them to the optional Lustre companion. Reconstruction uses the pure reducer. It never invokes application
+connects them to the frontend replay module. Reconstruction uses the pure reducer. It never invokes application
 effects. Native results become ordinary messages before capture.
 
 Choose replay-safe state and events **before** encoding. State formatters in a
@@ -215,14 +216,14 @@ The local S3 test is not an AWS deployment or power-failure durability test.
 See the [design](docs/design/design.typ), [rendered design](docs/design/design-layer.pdf),
 [vocabulary](docs/design/CONTEXT.typ) and [decision](docs/adr/0001-compose-recording-and-storage.md).
 
-## Replay composition experiment
+## Compose capture and replay
 
-The optional [Lustre companion](packages/retrace_frontend/docs/replay.md) supplies a typed
+The frontend [replay API](packages/retrace_frontend/docs/replay.md) supplies a typed
 replay module and disposable inert frame. The [inventory consumer](examples/basic/README.md)
 proves fixed desktop presentation, custom labels, application-native errors and
 the default browser/HTTP adapters without importing membership code.
 The advanced example additionally proves replaceable local archive adapters. The existing membership
-app uses the same companion with recorded viewport changes.
+app uses the same module with recorded viewport changes.
 
 The [client adapter contract](packages/retrace_frontend/docs/client.md) documents explicit
 Tauri selection, custom transport/storage and bounded pending capture. The viewer
