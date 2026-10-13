@@ -7,7 +7,7 @@ import gleam/result
 import lustre/effect.{type Effect}
 import retrace
 import retrace/wire
-import retrace_client as client
+import retrace_frontend/client
 
 pub opaque type State {
   State(

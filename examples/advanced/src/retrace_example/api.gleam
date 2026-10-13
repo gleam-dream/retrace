@@ -1,5 +1,5 @@
 import retrace_example/domain
-import retrace_lustre/viewport as presentation
+import retrace_frontend/viewport as presentation
 
 @external(javascript, "../example_ffi.mjs", "endpoint")
 pub fn endpoint() -> String

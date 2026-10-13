@@ -44,7 +44,7 @@ pub fn enqueue(
   }
 }
 
-@external(javascript, "./retrace_client_ffi.mjs", "start")
+@external(javascript, "../client_ffi.mjs", "start")
 fn start_runtime(
   endpoint: String,
   name: String,
@@ -53,29 +53,31 @@ fn start_runtime(
   on_status: fn(Int, Int, String) -> Nil,
 ) -> Client
 
-@external(javascript, "./retrace_client_ffi.mjs", "enqueue")
+@external(javascript, "../client_ffi.mjs", "enqueue")
 fn enqueue_runtime(
   client: Client,
   batch: String,
   saved: fn(Bool, String) -> Nil,
 ) -> Nil
 
-@external(javascript, "./retrace_client_ffi.mjs", "stop")
+@external(javascript, "../client_ffi.mjs", "stop")
 pub fn stop(client: Client) -> Nil
 
-@external(javascript, "./retrace_client_ffi.mjs", "retry")
+@external(javascript, "../client_ffi.mjs", "retry")
 pub fn retry(client: Client) -> Nil
 
-/// A factory that opens caller-owned persistence. See the adapter contract in README.
+/// A factory that opens caller-owned persistence. Use retrace_frontend/client/adapter
+/// to construct one from Gleam operations, or provide an existing FFI adapter.
 pub type Storage
 
-/// An abortable upload returning the acknowledgement JSON. No reducer runs here.
+/// An abortable upload returning acknowledgement JSON. Construct one through
+/// retrace_frontend/client/adapter or use a provided transport. No reducer runs here.
 pub type Transport
 
-@external(javascript, "./retrace_client_ffi.mjs", "browserStorage")
+@external(javascript, "../client_ffi.mjs", "browserStorage")
 pub fn browser_storage() -> Storage
 
-@external(javascript, "./retrace_client_ffi.mjs", "httpTransport")
+@external(javascript, "../client_ffi.mjs", "httpTransport")
 pub fn http_transport(endpoint: String) -> Transport
 
 /// Advanced entrypoint; the caller selects persistence and upload policy.
@@ -97,7 +99,7 @@ pub fn start_with(
   )
 }
 
-@external(javascript, "./retrace_client_ffi.mjs", "startWith")
+@external(javascript, "../client_ffi.mjs", "startWith")
 fn start_with_runtime(
   name: String,
   max_items: Int,

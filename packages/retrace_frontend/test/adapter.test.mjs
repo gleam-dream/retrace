@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import http from "node:http";
-import * as viewer from "../build/dev/javascript/retrace_viewer/retrace_viewer.mjs";
+import * as viewer from "../build/dev/javascript/retrace_frontend/retrace_frontend/viewer.mjs";
 import { Session } from "../build/dev/javascript/retrace/retrace/wire.mjs";
 // Consume the public Task callback contract directly.
 const request = (task) =>

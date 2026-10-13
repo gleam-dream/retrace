@@ -1,13 +1,9 @@
 import retrace_example/domain
 import retrace_example/screen
-import retrace_lustre
+import retrace_frontend/replay
 
-pub fn module() -> retrace_lustre.ReplayModule(
-  domain.Model,
-  domain.Message,
-  String,
-) {
-  retrace_lustre.ReplayModule(
+pub fn module() -> replay.ReplayModule(domain.Model, domain.Message, String) {
+  replay.ReplayModule(
     contract: domain.contract,
     decode_model: domain.decode_model,
     decode_event: domain.decode_message,
@@ -15,7 +11,7 @@ pub fn module() -> retrace_lustre.ReplayModule(
     equal: fn(a, b) { a == b },
     view: screen.view,
     viewport: fn(model) {
-      retrace_lustre.Viewport(model.viewport.width, model.viewport.height)
+      replay.Viewport(model.viewport.width, model.viewport.height)
     },
     label: fn(event) {
       case event.kind {

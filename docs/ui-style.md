@@ -89,7 +89,7 @@ supports explanatory text and metadata.
 
 Use the surface-specific ink and focus tokens. The viewer has separate neutral
 values for dense metadata; its full implemented palette lives in
-`packages/retrace_viewer/src/style.mjs`. The app palette lives in `examples/advanced/style.css`.
+`packages/retrace_frontend/src/style.mjs`. The app palette lives in `examples/advanced/style.css`.
 
 ## Typography
 

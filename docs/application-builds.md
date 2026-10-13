@@ -42,7 +42,7 @@ Its generated JavaScript bootstrap calls that compiled function with the ID, usi
 and does not require constructing generated Gleam records from JavaScript.
 A generated Gleam source module is also possible if created before compilation.
 
-The replay entrypoint calls `retrace_lustre.mount` with the same build ID used in
+The replay entrypoint calls `retrace_frontend/replay.mount` with the same build ID used in
 `wire.Session.build`. See [the maintained replay entrypoint](../examples/advanced/src/retrace_example/frame.gleam).
 Environment variables, HTML entrypoints and bundling remain application build
 configuration; no checked-in file needs to contain its own future commit hash.

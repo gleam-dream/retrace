@@ -5,7 +5,7 @@ import { decode_batch } from "../build/dev/javascript/retrace/retrace/wire.mjs";
 import {
   load,
   describe,
-} from "../build/dev/javascript/retrace_lustre/retrace_lustre.mjs";
+} from "../build/dev/javascript/retrace_frontend/retrace_frontend/replay.mjs";
 import { module as replayModule } from "../build/dev/javascript/retrace_example/retrace_example/replay.mjs";
 const app = replayModule();
 const model = {

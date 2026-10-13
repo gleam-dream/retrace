@@ -51,17 +51,17 @@ pub fn new(source: Source, artifacts: Resolver) -> Config {
 
 /// Mount owns DOM, playback clock and requests. Dispose before replacing the
 /// host. The disposer is idempotent. Artifacts must share the viewer's origin.
-@external(javascript, "./viewer_ffi.mjs", "mount")
+@external(javascript, "../viewer_ffi.mjs", "mount")
 pub fn mount(config: Config, selector: String) -> Result(fn() -> Nil, String)
 
 /// HTTP routes matching retrace_server's example collector, with a ten-second
 /// request deadline. Session search is bounded to the collector's first page.
-@external(javascript, "./viewer_ffi.mjs", "collector")
+@external(javascript, "../viewer_ffi.mjs", "collector")
 pub fn collector(endpoint: String) -> Source
 
 /// Resolve /<build>/manifest.json under a trusted same-origin directory.
 /// Validates api, build and contract. Never substitutes the current build.
-@external(javascript, "./viewer_ffi.mjs", "artifacts")
+@external(javascript, "../viewer_ffi.mjs", "artifacts")
 pub fn artifacts(directory: String) -> Resolver
 
 /// Explicit mutable development override; all other builds use the resolver.

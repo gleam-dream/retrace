@@ -5,9 +5,9 @@ import lustre/attribute
 import lustre/effect
 import lustre/element
 import lustre/element/html
-import retrace_client
+import retrace_frontend/capture
+import retrace_frontend/client
 import retrace_inventory/domain
-import retrace_lustre/capture
 
 type Model {
   Model(stock: domain.Stock, capture: capture.State, notice: String)
@@ -25,14 +25,9 @@ fn init(_: Nil) -> #(Model, effect.Effect(Message)) {
   let assert Ok(#(recording, connect)) =
     capture.start(
       session,
-      retrace_client.Config(
-        "http://127.0.0.1:4417",
-        "basic-outbox",
-        100,
-        1_048_576,
-      ),
-      retrace_client.browser_storage(),
-      retrace_client.http_transport("http://127.0.0.1:4417"),
+      client.Config("http://127.0.0.1:4417", "basic-outbox", 100, 1_048_576),
+      client.browser_storage(),
+      client.http_transport("http://127.0.0.1:4417"),
     )
   #(
     Model(domain.initial(), recording, "Opening local storage"),

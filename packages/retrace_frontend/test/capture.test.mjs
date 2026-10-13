@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import * as capture from "../build/dev/javascript/retrace_lustre/retrace_lustre/capture.mjs";
-import { Config } from "../build/dev/javascript/retrace_client/retrace_client.mjs";
+import * as capture from "../build/dev/javascript/retrace_frontend/retrace_frontend/capture.mjs";
+import { Config } from "../build/dev/javascript/retrace_frontend/retrace_frontend/client.mjs";
 import { Event } from "../build/dev/javascript/retrace/retrace/wire.mjs";
 import { perform } from "../build/dev/javascript/lustre/lustre/effect.mjs";
 const until = async (f) => {

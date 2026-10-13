@@ -290,20 +290,20 @@ pub fn mount(
   )
 }
 
-@external(javascript, "./retrace_lustre_ffi.mjs", "listen")
+@external(javascript, "../replay_ffi.mjs", "listen")
 fn listen(
   build: String,
   load: fn(String) -> Nil,
   seek: fn(Int) -> Nil,
 ) -> fn() -> Nil
 
-@external(javascript, "./retrace_lustre_ffi.mjs", "report")
+@external(javascript, "../replay_ffi.mjs", "report")
 fn report(kind: String, body: String) -> Nil
 
-@external(javascript, "./retrace_lustre_ffi.mjs", "prepareTarget")
+@external(javascript, "../replay_ffi.mjs", "prepareTarget")
 fn prepare_target(
   selector: String,
 ) -> Result(#(String, fn() -> Nil), lustre.Error)
 
-@external(javascript, "./retrace_lustre_ffi.mjs", "once")
+@external(javascript, "../replay_ffi.mjs", "once")
 fn once(dispose: fn() -> Nil) -> fn() -> Nil

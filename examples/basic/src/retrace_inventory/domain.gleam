@@ -7,7 +7,7 @@ import lustre/element.{type Element}
 import lustre/element/html
 import lustre/event
 import retrace/wire
-import retrace_lustre
+import retrace_frontend/replay
 
 pub const contract = "inventory-v1"
 
@@ -141,15 +141,15 @@ pub fn view(stock: Stock) -> Element(Command) {
   ])
 }
 
-pub fn replay_module() -> retrace_lustre.ReplayModule(Stock, Command, Refusal) {
-  retrace_lustre.ReplayModule(
+pub fn replay_module() -> replay.ReplayModule(Stock, Command, Refusal) {
+  replay.ReplayModule(
     contract: contract,
     decode_model: decode_stock,
     decode_event: decode_command,
     reduce: reduce,
     equal: fn(a, b) { a == b },
     view: view,
-    viewport: fn(_) { retrace_lustre.Viewport(900, 600) },
+    viewport: fn(_) { replay.Viewport(900, 600) },
     label: fn(event) {
       case event.kind {
         "receive" -> "Received a notebook"

@@ -1,8 +1,0 @@
-name = "retrace_client"
-version = "0.1.0"
-target = "javascript"
-licences = ["MIT"]
-description = "Durable browser and Tauri delivery runtime for Retrace"
-[dependencies]
-retrace = { path = "../.." }
-gleam_stdlib = ">= 1.0.0 and < 2.0.0"

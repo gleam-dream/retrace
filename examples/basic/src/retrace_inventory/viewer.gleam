@@ -1,5 +1,5 @@
+import retrace_frontend/viewer
 import retrace_inventory/domain
-import retrace_viewer as viewer
 
 pub fn main() -> fn() -> Nil {
   let resolver =

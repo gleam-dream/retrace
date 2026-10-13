@@ -22,13 +22,13 @@ try {
   ).toBeVisible();
   const result = await page.evaluate(async () => {
     const v =
-      await import("/build/dev/javascript/retrace_viewer/retrace_viewer.mjs");
+      await import("/build/dev/javascript/retrace_frontend/retrace_frontend/viewer.mjs");
     const { Result$Ok, toList } =
-      await import("/build/dev/javascript/retrace_viewer/gleam.mjs");
+      await import("/build/dev/javascript/retrace_frontend/gleam.mjs");
     const { None } =
       await import("/build/dev/javascript/gleam_stdlib/gleam/option.mjs");
     const vp =
-      await import("/build/dev/javascript/retrace_lustre/retrace_lustre/viewport.mjs");
+      await import("/build/dev/javascript/retrace_frontend/retrace_frontend/viewport.mjs");
     const wait = (ms) => new Promise((r) => setTimeout(r, ms));
     window.disposeViewer();
     const root = document.querySelector("#viewer"),

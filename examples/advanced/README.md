@@ -26,7 +26,7 @@ Open http://127.0.0.1:5191/?user=Ada. This viewer belongs to the advanced exampl
 it is not another adoption example. Add `&diagnostics` to the live app URL to
 inspect capture and delivery status.
 
-Browser capture selects IndexedDB; Tauri selects `retrace_client/tauri.storage()`.
+Browser capture selects IndexedDB; Tauri selects `retrace_frontend/client/tauri.storage()`.
 Both use HTTP delivery and the default collector reader. Device information
 comes from a real Rust command in Tauri; its result becomes a recorded message.
 Replay displays the stored result without invoking the command again.
@@ -64,7 +64,10 @@ runs retain the normal collector path by default.
 | `ReplayModule`    | Membership model, pure reducer, complete view and event labels | Checkpoint verification and inert reconstruction     |
 | `viewer.Config`   | Explicit 2,000-entry budget                                    | Playback controls and resource cleanup               |
 
-Custom storage must enforce durable limits and idempotent writes. Custom
+Custom adapters use `retrace_frontend/client/adapter.storage` and `adapter.transport`;
+no Promise or AbortSignal code is required in the application. Synchronous
+browser IO is wrapped with `adapter.defer`. Custom storage must enforce durable
+limits and idempotent writes. Custom
 transports must honor cancellation. Viewer tasks return a cancellation function;
 synchronous archive reads return a no-op. Applications own safe projections and
 callback lifetimes, and can use the lower-level packages without the Lustre hook.
@@ -75,7 +78,8 @@ callback lifetimes, and can use the lower-level packages without the Lustre hook
 - `src/retrace_example/domain.gleam`, `screen.gleam`, `replay.gleam`: application
   meaning, shared view and typed replay module.
 - `src/retrace_example/local_archive.gleam`: custom typed source plus storage and
-  transport access. `src/local_archive_ffi.mjs` is the browser-storage boundary.
+  constructors through `retrace_frontend/client/adapter`. Queue policy and archive receipts
+  are Gleam code; `src/local_archive_ffi.mjs` only binds browser IO and URL selection.
 - `src/retrace_example/api.gleam` and `src/example_ffi.mjs`: application-specific
   environment/build values, typed viewport translation and native command access.
 - `src/retrace_example/frame.gleam`: inert historical application entrypoint.

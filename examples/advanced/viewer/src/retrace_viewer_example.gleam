@@ -1,5 +1,5 @@
 import retrace_example/local_archive
-import retrace_viewer as viewer
+import retrace_frontend/viewer
 
 pub fn main() -> fn() -> Nil {
   let artifacts =

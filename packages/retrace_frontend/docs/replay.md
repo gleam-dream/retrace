@@ -9,10 +9,12 @@ See `examples/basic/src/retrace_inventory/domain.gleam` and
 `examples/advanced/src/retrace_example/replay.gleam` for two different consumers.
 
 ```gleam
+import retrace_frontend/replay
+
 let app = domain.replay_module()
-let snapshots = retrace_lustre.load(app, batches, build_id, 5000)
+let snapshots = replay.load(app, batches, build_id, 5000)
 // In the historical iframe entrypoint:
-let mounted = retrace_lustre.mount(app, build_id, "#app", 5000)
+let mounted = replay.mount(app, build_id, "#app", 5000)
 // On Ok(dispose), retain and call dispose when the host tears it down.
 ```
 
@@ -30,7 +32,7 @@ Lustre SPA shutdown branch is unimplemented, so cleanup does not rely on it.
 Use one frame runtime per iframe document. Cleanup is idempotent.
 
 A fixed viewport needs only `fn(_) { Viewport(900, 600) }`. For changing dimensions,
-`retrace_lustre/viewport.read()` and `.observe(callback)` return CSS dimensions
+`retrace_frontend/viewport.read()` and `.observe(callback)` return CSS dimensions
 and vertical safe areas as a typed `Viewport(width, height, top, bottom)`.
 The observer returns cleanup. The application chooses its event schema and
 translates these observations into its own model.
@@ -39,7 +41,7 @@ record OS sheets, keyboard pixels or arbitrary scrolling.
 
 ## Live capture
 
-`retrace_lustre/capture` coordinates the core recorder and client delivery through
+`retrace_frontend/capture` coordinates the core recorder and client delivery through
 immutable `State` and Lustre effects. `start` returns state and a connection effect;
 map its `Message` into your application and feed it to `update`. `observe` takes
 the state before an accepted transition, its message, and safe encoders. It never
@@ -48,12 +50,12 @@ separately; failure stops further capture without disabling the application.
 Run `stop` before discarding the state. The client is owned by this capture state;
 do not share it across independently advancing application models.
 
-See the [adoption guide](../../docs/adopting-lustre.md) for the complete update
+See the [adoption guide](../../../docs/adopting-lustre.md) for the complete update
 pattern, Tauri selection, typed observation and runtime lifetime.
 
 ## Viewer host
 
-The optional [retrace_viewer package](../retrace_viewer/README.md) provides the
+The optional [viewer module](viewer.md) provides the
 default shell with typed, cancellable source and artifact adapters. The standard
 configuration is Gleam; DOM and timing FFI stay private. Applications can replace
 the shell entirely while reusing `load`, `describe` and `mount`.

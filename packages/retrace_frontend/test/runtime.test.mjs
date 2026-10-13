@@ -7,7 +7,7 @@ import {
   retry,
   stop,
   httpTransport,
-} from "../src/retrace_client_ffi.mjs";
+} from "../src/client_ffi.mjs";
 function memory() {
   const rows = new Map();
   return {

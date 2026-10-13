@@ -6,13 +6,13 @@ import lustre/effect.{type Effect}
 import lustre/element.{type Element}
 import lustre/element/html
 import lustre/event
-import retrace_client
-import retrace_client/tauri
 import retrace_example/api
 import retrace_example/domain
 import retrace_example/local_archive
 import retrace_example/screen
-import retrace_lustre/capture
+import retrace_frontend/capture
+import retrace_frontend/client
+import retrace_frontend/client/tauri
 
 type Model {
   Model(live: domain.Model, capture: capture.State, unobserve: fn() -> Nil)
@@ -39,15 +39,15 @@ fn init(_: Nil) -> #(Model, Effect(Message)) {
   let assert Ok(#(recording, connect)) =
     capture.start(
       session,
-      retrace_client.Config(api.endpoint(), "retrace-example", 2000, 8_388_608),
+      client.Config(api.endpoint(), "retrace-example", 2000, 8_388_608),
       case local_archive.selected(), api.platform() {
         True, _ -> local_archive.storage()
         False, "tauri" -> tauri.storage()
-        False, _ -> retrace_client.browser_storage()
+        False, _ -> client.browser_storage()
       },
       case local_archive.selected() {
         True -> local_archive.transport()
-        False -> retrace_client.http_transport(api.endpoint())
+        False -> client.http_transport(api.endpoint())
       },
     )
   #(

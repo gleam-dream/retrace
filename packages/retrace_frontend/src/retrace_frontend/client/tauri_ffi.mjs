@@ -1,4 +1,4 @@
-import { checkCapacity } from "../retrace_client_ffi.mjs";
+import { checkCapacity } from "../../client_ffi.mjs";
 export async function openTauri(name, maxItems, maxBytes) {
   const { load } = await import("@tauri-apps/plugin-store");
   const store = await load(`${name}.json`, { autoSave: false, defaults: {} });

@@ -22,13 +22,22 @@ selects the historical executable and styles.
 
 ## 2. Connect capture once
 
-Add `retrace_lustre` and `retrace_client` as local dependencies until publication.
+Add one frontend dependency, using the relative path from your application:
+
+```toml
+[dependencies]
+retrace_frontend = { path = "../../packages/retrace_frontend" }
+```
+
+Keep direct `retrace`, `lustre` and codec dependencies where your application imports them.
+The frontend package contains delivery, capture, replay and viewer modules; choose
+modules per entrypoint. The core and server remain separate packages.
 Keep a `capture.State` field in your Lustre model and a
 `Recording(capture.Message)` variant in its message type.
 
 ```gleam
-import retrace_client as client
-import retrace_lustre/capture
+import retrace_frontend/client as client
+import retrace_frontend/capture
 
 let session = capture.session(user_ref, build_id, contract, "web")
 let assert Ok(#(recording, connect)) = capture.start(
@@ -42,7 +51,7 @@ let assert Ok(#(recording, connect)) = capture.start(
 
 The helper creates a session ID and monotonic clock. `start_with_clock` accepts
 an explicit clock for deterministic consumers. Tauri uses `tauri.storage()` from
-`retrace_client/tauri` instead of browser storage, with the normal npm plugin and
+`retrace_frontend/client/tauri` instead of browser storage, with the normal npm plugin and
 Tauri permission setup. Browser consumers need no native dependencies.
 
 ## 3. Observe accepted transitions
@@ -88,26 +97,30 @@ Both retain their application-native message/model types. Start with basic for d
 
 ## 4. Expose one historical replay module
 
-Construct `retrace_lustre.ReplayModule` with codecs, pure reducer, equality, full
+Import `retrace_frontend/replay` and construct `replay.ReplayModule` with codecs, pure reducer, equality, full
 view, viewport projection and event labels. The application supplies this small
 adapter; its live and replay entrypoints share the same view.
 
 ```gleam
-retrace_lustre.mount(replay.module(), build_id, "#app", 5000)
+import my_app/replay_adapter
+import retrace_frontend/replay
+
+replay.mount(replay_adapter.module(), build_id, "#app", 5000)
 ```
 
 Retain the returned disposer. A fixed desktop viewport is a constant projection.
-For responsive screens, `retrace_lustre/viewport.read()` and `.observe(callback)`
+For responsive screens, `retrace_frontend/viewport.read()` and `.observe(callback)`
 supply typed `Viewport(width, height, top, bottom)` observations. Translate them
 into your own model and event schema, and call the observer's disposer on unmount.
 Presentation fields never enter the portable core.
 
 ## 5. Mount the separate viewer
 
-Add the optional `retrace_viewer` package. This is a complete standard host:
+Use `retrace_frontend/viewer` from the same frontend dependency. A separate viewer
+application also declares `retrace_frontend`. This is a complete standard host:
 
 ```gleam
-import retrace_viewer as viewer
+import retrace_frontend/viewer as viewer
 
 pub fn main() -> fn() -> Nil {
   let assert Ok(dispose) =
@@ -131,13 +144,16 @@ is a typed artifact lookup function. Each returns `Task(value)`: a callback-base
 operation that replies once with `Result` and returns cancellation. Search,
 selection and disposal cancel obsolete tasks; late replies cannot update the UI.
 The [advanced archive source](../examples/advanced/src/retrace_example/local_archive.gleam)
-implements these policies in Gleam. The basic example has no handwritten FFI. Only the advanced example’s deliberately custom localStorage
-adapter uses FFI. Defaults use collector HTTP and a manifest directory.
+implements these policies in Gleam. Custom client storage and uploads use
+`retrace_frontend/client/adapter` typed constructors, with provider-specific errors and
+explicit cancellation. The basic example has no handwritten FFI. The advanced
+example retains only a thin localStorage IO binding; queue rules and receipt
+construction live in Gleam. Defaults use collector HTTP and a manifest directory.
 
 Customize the `Config` record's `max_entries` and `label_event`, or override
 `.retrace-viewer` selectors in your stylesheet. Artifacts own application styles,
 labels and viewport projection. A completely different viewer can reuse
-`retrace_lustre.load`, `describe` and `mount`, but the packaged shell does not
+`replay.load`, `describe` and `mount`, but the packaged shell does not
 currently expose a replaceable UI component tree or separate playback controller.
 
 ## 6. Preserve artifacts and operate collection

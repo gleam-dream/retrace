@@ -25,15 +25,15 @@ list retains each entry. The starting checkpoint is reachable at the beginning o
 | ----------------------------------------------------------- | ---------------------------------------------------------------- | ---------------------------- |
 | `retrace_example/domain.gleam`                              | App model, safe payloads, reducer, presentation observations     | Transport or effects         |
 | `retrace_example/screen.gleam`                              | Complete app view, reused in live and historical entrypoints     | Viewer controls              |
-| `retrace_lustre`                                            | Build/schema checks, checkpoints, reconstruction and inert frame | Live effects or storage      |
+| `retrace_frontend/replay`                                   | Build/schema checks, checkpoints, reconstruction and inert frame | Live effects or storage      |
 | `retrace_example/replay.gleam`                              | Membership codecs, view, labels and viewport projection          | Generic replay machinery     |
 | `retrace_example/frame.gleam`                               | Historical Lustre entrypoint and inert view                      | Native calls or capture      |
-| `packages/retrace_viewer/src/timeline.mjs`                  | Time-to-state selection and marker grouping                      | Timers, storage or DOM       |
-| `retrace_viewer`                                            | Default interface, frame lifecycle, playback clock               | Collector or artifact policy |
+| `packages/retrace_frontend/src/timeline.mjs`                | Time-to-state selection and marker grouping                      | Timers, storage or DOM       |
+| `retrace_frontend/viewer`                                   | Default interface, frame lifecycle, playback clock               | Collector or artifact policy |
 | `examples/advanced/viewer/src/retrace_viewer_example.gleam` | Collector reads and build-to-artifact resolution                 | App model or reducer         |
 
 The application, historical renderer and viewer configuration are Gleam. The
-optional `retrace_viewer` package keeps DOM, frame messaging and animation timing
+optional `retrace_frontend/viewer` module keeps DOM, frame messaging and animation timing
 inside its implementation. Its defaults need no application-authored FFI:
 
 ```gleam
@@ -44,7 +44,7 @@ viewer.new(viewer.collector(endpoint), viewer.artifacts("/artifacts"))
 Retain and call the returned disposer when removing the viewer. Custom typed
 `Source` and `Resolver` functions own storage, authorization and artifact lookup;
 the viewer owns cancellation of their pending tasks. Search and session selection
-ignore stale replies. See [the package contract](../packages/retrace_viewer/README.md)
+ignore stale replies. See [the viewer contract](../packages/retrace_frontend/docs/viewer.md)
 for paging, cancellation, customization and development overrides.
 
 ## Preserve the matching build
@@ -102,7 +102,7 @@ long-session memory efficiency; checkpoint-based lazy seeking is a future option
 Run from the repository root inside Nix, with services, app and viewer running:
 
 ```sh
-node --test packages/retrace_viewer/test/*.test.mjs
+node --test packages/retrace_frontend/test/*.test.mjs
 node --test examples/advanced/dev/history.test.mjs
 node dev/browser-check.mjs
 node dev/simulator/check_browser.mjs SESSION_UUID
@@ -115,11 +115,11 @@ evidence remain distinct; this setup has no physical-phone deployment claim.
 
 ## Composition with another application
 
-The experimental `retrace_lustre` companion now owns reconstruction and frame
+The experimental `retrace_frontend/replay` companion now owns reconstruction and frame
 lifetime. Membership and inventory supply their own typed replay modules. The
 viewer gets labels and dimensions from artifact metadata and reads pages through
 the typed `Source.read_range(id, after, limit)`; it no longer requires `loadSession` to
-return the entire recording. See [the companion contract](../packages/retrace_lustre/README.md)
+return the entire recording. See [the companion contract](../packages/retrace_frontend/docs/replay.md)
 and [basic consumer](../examples/basic/README.md). It still retains a
 bounded range of snapshots. This interface change does not imply lazy seek,
 live tailing, or production-scale storage validation.

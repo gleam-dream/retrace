@@ -47,16 +47,15 @@ no physical-phone deployment is claimed by these examples.
 
 ## Package boundaries
 
-| Package          | Owns                                                               | Application supplies                                       |
-| ---------------- | ------------------------------------------------------------------ | ---------------------------------------------------------- |
-| `retrace`        | Typed recording, checkpoints, reconstruction and wire validation   | Model, event types, safe codecs and pure reducer           |
-| `retrace_client` | Bounded persistence, delivery, retry and receipt validation        | Endpoint, storage/transport selection and runtime lifetime |
-| `retrace_lustre` | Capture hook, typed replay module, inert frame and viewport helper | Existing update/effects, full view and safe projection     |
-| `retrace_viewer` | Default UI, styles, playback and cancellable reads                 | Source, artifact resolver, configuration and host lifetime |
-| `retrace_server` | Atomic admission, indexing, archive and retrieval                  | Database pool, object store and worker lifetime            |
+| Package            | Owns                                                                      | Application supplies                                                 |
+| ------------------ | ------------------------------------------------------------------------- | -------------------------------------------------------------------- |
+| `retrace`          | Typed recording, checkpoints, reconstruction and wire validation          | Model, event types, safe codecs and pure reducer                     |
+| `retrace_frontend` | Browser/Tauri delivery, Lustre capture/replay and optional viewer modules | Safe projections, adapters, full view and explicit runtime lifetimes |
+| `retrace_server`   | Atomic admission, indexing, archive and retrieval                         | Database pool, object store and worker lifetime                      |
 
-The root package has no Lustre, Tauri, database or network dependency. Customers
-can compose these packages independently. The two examples import public APIs;
+The root package has no Lustre, Tauri, database or network dependency. The frontend depends on core and Lustre; the server depends on core and backend libraries.
+Frontend modules compose independently: using capture does not mount a viewer, and
+using a viewer does not start capture or upload. The two examples import public APIs;
 advanced configuration replaces adapters without forking shared validation.
 [Attribution and revision provenance](THIRD_PARTY.md) remain after retiring the
 unused Time Travel vendor sources.
@@ -164,7 +163,7 @@ node dev/browser-check.mjs        # offline queue, full view, timing, inert repl
 node dev/basic-browser-check.mjs       # default browser consumer (5193)
 node dev/composition-browser-check.mjs # advanced custom adapters (5190)
 node dev/viewer-api-browser-check.mjs  # cancellation, remount, typed viewport (5193)
-node --test packages/retrace_viewer/test/*.test.mjs
+node --test packages/retrace_frontend/test/*.test.mjs
 node --test examples/advanced/dev/history.test.mjs
 ```
 
@@ -218,14 +217,14 @@ See the [design](docs/design/design.typ), [rendered design](docs/design/design-l
 
 ## Replay composition experiment
 
-The optional [Lustre companion](packages/retrace_lustre/README.md) supplies a typed
+The optional [Lustre companion](packages/retrace_frontend/docs/replay.md) supplies a typed
 replay module and disposable inert frame. The [inventory consumer](examples/basic/README.md)
 proves fixed desktop presentation, custom labels, application-native errors and
 the default browser/HTTP adapters without importing membership code.
 The advanced example additionally proves replaceable local archive adapters. The existing membership
 app uses the same companion with recorded viewport changes.
 
-The [client adapter contract](packages/retrace_client/README.md) documents explicit
+The [client adapter contract](packages/retrace_frontend/docs/client.md) documents explicit
 Tauri selection, custom transport/storage and bounded pending capture. The viewer
 now requests bounded pages by absolute cursor; it still retains its selected
 range and is not a million-event UI.

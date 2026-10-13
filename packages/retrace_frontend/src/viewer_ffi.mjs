@@ -7,7 +7,7 @@ import {
   Page,
   Artifact,
   EventLabel,
-} from "./retrace_viewer.mjs";
+} from "./retrace_frontend/viewer.mjs";
 import { css } from "./style.mjs";
 import { createViewer } from "./viewer.mjs";
 const message = (error) => error?.message || String(error);

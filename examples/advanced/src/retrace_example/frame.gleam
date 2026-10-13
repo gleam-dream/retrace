@@ -2,10 +2,9 @@
 
 import retrace_example/api
 import retrace_example/replay
-import retrace_lustre
+import retrace_frontend/replay as frame
 
 pub fn main() -> Nil {
-  let assert Ok(_) =
-    retrace_lustre.mount(replay.module(), api.build(), "#app", 5000)
+  let assert Ok(_) = frame.mount(replay.module(), api.build(), "#app", 5000)
   Nil
 }

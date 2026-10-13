@@ -6,7 +6,7 @@ import {
   load,
   describe,
   InvalidReplay,
-} from "./build/dev/javascript/retrace_lustre/retrace_lustre.mjs";
+} from "./build/dev/javascript/retrace_frontend/retrace_frontend/replay.mjs";
 import {
   replay_module,
   NothingReserved,

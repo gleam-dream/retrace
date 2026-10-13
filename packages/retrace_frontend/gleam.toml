@@ -1,10 +1,9 @@
-name = "retrace_lustre"
+name = "retrace_frontend"
 version = "0.1.0"
 target = "javascript"
 licences = ["MIT"]
-description = "Experimental typed replay modules and inert Lustre frames for Retrace"
+description = "Composable browser and Tauri capture, delivery, and Lustre session replay"
 [dependencies]
-retrace_client = { path = "../retrace_client" }
 retrace = { path = "../.." }
 gleam_stdlib = ">= 1.0.0 and < 2.0.0"
 gleam_json = "== 3.1.0"

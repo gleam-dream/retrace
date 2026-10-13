@@ -1,11 +1,12 @@
 # Retrace viewer (experimental)
 
-A default session inspection UI with a typed Gleam interface. The package owns
+A default session inspection UI with a typed Gleam interface. The module owns
 its DOM, scoped styles, playback clock, frame protocol and pending read lifetimes.
-It has no Lustre, Tauri, application model or database dependency.
+The viewer module has no Lustre imports and needs no Tauri plugin or database.
+Its containing frontend package also supplies Lustre integration and depends on Lustre.
 
 ```gleam
-import retrace_viewer as viewer
+import retrace_frontend/viewer as viewer
 
 let config = viewer.new(
   viewer.collector("http://127.0.0.1:4417"),
@@ -56,6 +57,6 @@ FFI or copy it. For a fully different UI use the companion's `load`, `describe`
 and `mount`; this package does not expose a separate headless playback controller.
 It does not add live subscriptions, lazy seek or an unbounded cache.
 
-See [the standard viewer](../../examples/advanced/viewer/src/retrace_viewer_example.gleam),
-[the custom advanced source](../../examples/advanced/src/retrace_example/local_archive.gleam)
-and [adoption journey](../../docs/adopting-lustre.md).
+See [the standard viewer](../../../examples/advanced/viewer/src/retrace_viewer_example.gleam),
+[the custom advanced source](../../../examples/advanced/src/retrace_example/local_archive.gleam)
+and [adoption journey](../../../docs/adopting-lustre.md).
