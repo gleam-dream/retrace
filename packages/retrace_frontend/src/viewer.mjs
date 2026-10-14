@@ -1,5 +1,6 @@
 import { positionAt, advance, clusters, previousTime } from "./timeline.mjs";
 import { loadRange } from "./range.mjs";
+import { channelPolicy, acceptsMessage } from "./channel.mjs";
 const format = (ms) =>
   `${Math.floor(ms / 60000)}:${((ms / 1000) % 60).toFixed(1).padStart(4, "0")}`;
 function node(tag, className, text) {
@@ -18,8 +19,10 @@ export function createViewer(
     resolveArtifact,
     labelEvent = (e) => e.label || e.kind,
     maxEntries = 5000,
+    frameMode = "same-origin",
   },
 ) {
+  const channel = channelPolicy(frameMode, location.origin);
   root.innerHTML = `<header class="topbar"><strong>Retrace</strong><span>Session viewer</span><span class="local">Local development</span></header>
  <div class="layout"><aside class="sessions"><h1>Sessions</h1><form class="search"><label for="user">User reference</label><div><input id="user" autocomplete="off" placeholder="All users"><button type="submit" aria-label="Refresh sessions">Find</button></div></form><p class="search-status" role="status"></p><div class="session-list"></div></aside>
  <main class="workspace"><header class="session-heading"><div><h2>Select a recording</h2><p class="identity">Choose a session to reconstruct its application.</p></div><button class="reload" hidden>Reload recording</button></header>
@@ -29,6 +32,8 @@ export function createViewer(
   const $ = (s) => root.querySelector(s),
     frame = $("iframe"),
     signal = new AbortController();
+  frame.referrerPolicy = "no-referrer";
+  if (frameMode === "opaque") frame.setAttribute("sandbox", "allow-scripts");
   let request = 0,
     searchRequest = 0,
     token = "",
@@ -64,7 +69,7 @@ export function createViewer(
   function send(type, extra = {}) {
     frame.contentWindow?.postMessage(
       { api: 1, token, type, ...extra },
-      location.origin,
+      channel.targetOrigin,
     );
   }
   function pause() {
@@ -78,6 +83,7 @@ export function createViewer(
     clearTimeout(timeout);
     events = [];
     frame.removeAttribute("src");
+    frame.removeAttribute("srcdoc");
     $(".frame-size").hidden = true;
     $(".stage-message").hidden = false;
     $(".stage-message").textContent = message;
@@ -198,10 +204,7 @@ export function createViewer(
   on(window, "message", (event) => {
     const data = event.data;
     if (
-      event.source !== frame.contentWindow ||
-      event.origin !== location.origin ||
-      data?.token !== token ||
-      data.api !== 1
+      !acceptsMessage(event, frame.contentWindow, channel.receiveOrigin, token)
     )
       return;
     if (data.type === "ready") {
@@ -282,6 +285,7 @@ export function createViewer(
     token = crypto.randomUUID();
     clearTimeout(timeout);
     frame.removeAttribute("src");
+    frame.removeAttribute("srcdoc");
     $(".reload").hidden = false;
     $(".frame-size").hidden = true;
     $(".stage-message").hidden = false;
@@ -320,20 +324,39 @@ export function createViewer(
       if (generation !== request || disposed) return;
       if (artifact.api !== 1 || artifact.build !== session.build)
         throw Error("Unsupported artifact protocol or build.");
-      const target = new URL(artifact.url, location.href);
-      if (target.origin !== location.origin)
-        throw Error(
-          "This local viewer only loads artifacts from its own origin.",
-        );
+      let target;
+      if (frameMode === "opaque") {
+        if (
+          typeof artifact.isolated_html !== "string" ||
+          !artifact.isolated_html
+        )
+          throw Error(
+            "Opaque replay requires a verified self-contained document.",
+          );
+      } else {
+        target = new URL(artifact.url, location.href);
+        if (
+          target.origin !== location.origin ||
+          target.username ||
+          target.password
+        )
+          throw Error(
+            "This local viewer only loads artifacts from its own origin.",
+          );
+      }
       build = session.build;
       $(".session-heading h2").textContent =
         `${session.user_ref} · ${session.platform === "tauri" ? "Tauri" : "Web"}`;
       $(".identity").textContent =
         `${id} · ${artifact.development ? "mutable development build" : build}`;
-      target.searchParams.set("token", token);
+      frame.name = `retrace:${token}`;
       frame.dataset.recording = JSON.stringify(batches);
       frame.dataset.startTime = String(startTime);
-      frame.src = target.href;
+      if (frameMode === "opaque") frame.srcdoc = artifact.isolated_html;
+      else {
+        target.searchParams.set("token", token);
+        frame.src = target.href;
+      }
       timeout = setTimeout(
         () =>
           fail(

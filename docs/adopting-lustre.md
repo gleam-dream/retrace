@@ -167,7 +167,26 @@ Mutable development overrides are explicit with `viewer.with_development`.
 The example collector composes PostgreSQL and object storage. Hosted
 authentication, tenant isolation, retention and erasure remain deployment policy.
 Viewer tasks permit custom authenticated readers without changing capture.
-Artifacts are trusted same-origin code, not a hostile-code sandbox.
+Default artifacts are trusted same-origin code. For authenticated hosted viewers,
+the JavaScript `createViewer` option `frameMode: "opaque"` requires its artifact
+resolver to return `{api: 1, build, isolated_html}`. This is a self-contained
+HTML document assembled from verified immutable bytes by the application. The
+viewer sets `sandbox="allow-scripts"` and `referrerpolicy="no-referrer"`; it never
+grants same-origin, form, popup, download or top-navigation capabilities. The
+assembler must embed scripts/styles/fonts, provide a restrictive CSP blocking
+network access, and inject its own fixed trusted parent origin. Do not derive
+that origin from recording content, query parameters, referrers or messages.
+
+The artifact calls `replay.mount_with_parent_origin(app, build, selector,
+max_entries, trusted_parent_origin)` instead of `mount`. It returns
+`Result(fn() -> Nil, String)`, rejecting noncanonical HTTP(S) origins. The viewer
+puts a fresh nonce in the iframe name before assigning srcdoc; the frame accepts
+messages only from its parent window, exact configured origin, nonce and protocol
+version. The viewer accepts only the selected frame window, opaque `null` origin,
+nonce and protocol version. Sending to an opaque frame uses `*` only in this
+explicit mode; no incoming origin check becomes a wildcard. Neither this channel
+nor the iframe sandbox certifies application-supplied reducers as pure. The typed
+Gleam viewer's existing `mount` continues to use same-origin URL artifacts.
 
 This is still an experimental, bounded replay API: 5,000 retained events by
 default, no lazy seek, live tail, automatic DOM capture or million-event UI claim.
