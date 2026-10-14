@@ -30,10 +30,16 @@ export function createViewer(
  <footer class="transport"><div class="transport-controls"><button class="previous" aria-label="Previous event" disabled>Previous</button><button class="play" disabled>Play</button><button class="next" aria-label="Next event" disabled>Next</button><output class="clock">0:00.0 / 0:00.0</output><label class="speed-label">Speed <select aria-label="Playback speed"><option value="0.5">0.5×</option><option value="1" selected>1×</option><option value="2">2×</option><option value="4">4×</option></select></label></div>
  <div class="timeline"><div class="markers"></div><input class="scrubber" type="range" min="0" max="1" value="0" step="1" aria-label="Playback position" disabled></div><div class="timeline-caption"><span>Original timing · gaps preserved</span><span class="range-note">No recording loaded</span></div></footer></main></div>`;
   const $ = (s) => root.querySelector(s),
-    frame = $("iframe"),
     signal = new AbortController();
-  frame.referrerPolicy = "no-referrer";
-  if (frameMode === "opaque") frame.setAttribute("sandbox", "allow-scripts");
+  let frame = $("iframe");
+  function newFrame() {
+    const next = node("iframe");
+    next.title = "Recorded application";
+    next.tabIndex = -1;
+    next.referrerPolicy = "no-referrer";
+    if (frameMode === "opaque") next.setAttribute("sandbox", "allow-scripts");
+    return next;
+  }
   let request = 0,
     searchRequest = 0,
     token = "",
@@ -82,6 +88,7 @@ export function createViewer(
     pause();
     clearTimeout(timeout);
     events = [];
+    frame.remove();
     frame.removeAttribute("src");
     frame.removeAttribute("srcdoc");
     $(".frame-size").hidden = true;
@@ -284,8 +291,11 @@ export function createViewer(
     selected = id;
     token = crypto.randomUUID();
     clearTimeout(timeout);
-    frame.removeAttribute("src");
-    frame.removeAttribute("srcdoc");
+    // Browsers can clear window.name when an already connected iframe enters an
+    // opaque document. Create the named browsing context only after all initial
+    // attributes and the document are ready, and retire the previous window.
+    frame.remove();
+    frame = newFrame();
     $(".reload").hidden = false;
     $(".frame-size").hidden = true;
     $(".stage-message").hidden = false;
@@ -357,6 +367,7 @@ export function createViewer(
         target.searchParams.set("token", token);
         frame.src = target.href;
       }
+      $(".frame-size").append(frame);
       timeout = setTimeout(
         () =>
           fail(

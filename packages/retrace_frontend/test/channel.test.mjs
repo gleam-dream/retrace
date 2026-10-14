@@ -192,6 +192,7 @@ test("viewer creates only explicit script-only opaque frames and fences replaced
     }
     replaceChildren() {}
     append() {}
+    remove() {}
   }
   const elements = new Map();
   const root = new Element();
@@ -200,14 +201,23 @@ test("viewer creates only explicit script-only opaque frames and fences replaced
     return elements.get(selector);
   };
   root.querySelectorAll = () => [];
-  const frame = root.querySelector("iframe"),
-    sent = [];
+  let frame = root.querySelector("iframe");
+  const sent = [];
   frame.contentWindow = { postMessage: (...args) => sent.push(args) };
+  root.querySelector(".frame-size").append = (next) => {
+    frame = next;
+  };
+  const document = new EventTarget();
+  document.createElement = () => {
+    const element = new Element();
+    element.contentWindow = { postMessage: (...args) => sent.push(args) };
+    return element;
+  };
   const window = new EventTarget();
   Object.assign(globalThis, {
     window,
     location: new URL("https://staff.example/?session=one"),
-    document: new EventTarget(),
+    document,
     history: { replaceState() {} },
     cancelAnimationFrame() {},
     ResizeObserver: class {
@@ -256,6 +266,7 @@ test("viewer creates only explicit script-only opaque frames and fences replaced
     assert.match(frame.srcdoc, /verified self-contained/);
     assert.equal(frame.src, undefined);
     const first = frame.name.slice(8);
+    const previousWindow = frame.contentWindow;
     assert.ok(first);
     dispatch(first, { origin: "https://staff.example" });
     dispatch(first, { source: {} });
@@ -268,6 +279,7 @@ test("viewer creates only explicit script-only opaque frames and fences replaced
     root.querySelector(".reload").dispatchEvent(new Event("click"));
     await new Promise((resolve) => setImmediate(resolve));
     assert.notEqual(frame.name.slice(8), first);
+    assert.notEqual(frame.contentWindow, previousWindow);
     dispatch(first);
     assert.equal(sent.length, 1);
     dispatch(frame.name.slice(8));
