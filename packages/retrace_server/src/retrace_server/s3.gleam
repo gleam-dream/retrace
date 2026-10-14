@@ -3,6 +3,7 @@
 
 import bucket
 import bucket/create_bucket
+import bucket/delete_object
 import bucket/get_object
 import bucket/put_object
 import gleam/httpc
@@ -53,6 +54,24 @@ pub fn create(
   // Existing buckets should normally be provisioned by the host.
   case response.status {
     200 | 409 -> Ok(Nil)
+    _ -> Error(Unavailable)
+  }
+}
+
+/// Idempotent deletion adapter, supplied separately to preserve existing stores.
+pub fn remove(
+  credentials: bucket.Credentials,
+  name: String,
+  key: String,
+) -> Result(Nil, StorageError) {
+  use response <- result.try(
+    delete_object.request(name, key)
+    |> delete_object.build(credentials)
+    |> httpc.dispatch_bits(httpc.configure() |> httpc.timeout(5000), _)
+    |> result.map_error(fn(_) { Unavailable }),
+  )
+  case response.status {
+    204 | 404 -> Ok(Nil)
     _ -> Error(Unavailable)
   }
 }

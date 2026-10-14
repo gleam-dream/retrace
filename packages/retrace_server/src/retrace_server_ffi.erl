@@ -1,5 +1,5 @@
 -module(retrace_server_ffi).
--export([digest/1, compress/1, decompress/1, directory_put/3, directory_get/2]).
+-export([digest/1, compress/1, decompress/1, directory_put/3, directory_get/2, directory_remove/2]).
 digest(Input) -> binary:encode_hex(crypto:hash(sha256, Input)).
 compress(Input) -> zlib:gzip(Input).
 decompress(Input) ->
@@ -30,6 +30,16 @@ directory_get(Root, Key) ->
         {ok, Path} -> case file:read_file(Path) of
             {ok, Body} -> {ok, Body};
             {error, enoent} -> {error, missing};
+            _ -> {error, unavailable}
+        end;
+        Error -> Error
+    end.
+
+directory_remove(Root, Key) ->
+    case path(Root, Key) of
+        {ok, Path} -> case file:delete(Path) of
+            ok -> {ok, nil};
+            {error, enoent} -> {ok, nil};
             _ -> {error, unavailable}
         end;
         Error -> Error

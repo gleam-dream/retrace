@@ -13,3 +13,6 @@ fn put(root: String, key: String, body: BitArray) -> Result(Nil, StorageError)
 
 @external(erlang, "retrace_server_ffi", "directory_get")
 fn get(root: String, key: String) -> Result(BitArray, StorageError)
+
+@external(erlang, "retrace_server_ffi", "directory_remove")
+pub fn remove(root: String, key: String) -> Result(Nil, StorageError)

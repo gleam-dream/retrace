@@ -90,7 +90,13 @@
       #when[the collector restarts and the viewer requests that session]
       #then[the session remains searchable and its recording is fetched and checked before playback]
     ]
+    #behavior(title: "Erasure fences delivery and archival", level: "boundary", area: "Retention")[
+      #given[a caller-authorized session deletion]
+      #when[the caller commits a fence and drives erasure]
+      #then[admission and reads refuse the session, active archival settles before the fence, objects are deleted before recording rows, and retained tombstones permit idempotent retry and late-object reconciliation]
+    ]
     #points(
+      [The host owns retention deadlines, authorization, backup restoration and recurring erasure. Permanent opaque tombstones prevent late delivery. Recorded object keys remain for repeated deletion after an ambiguous remote PUT; completed erasure does not establish removal from provider versions or backups.],
       [Database states are pending, with payload and digest, and archived, with object key and digest. Upload precedes committing the archived state. A crash before that commit can leave an orphan object; the deterministic key makes retry safe. Failed upload never clears the database payload.],
       [Admission locks the session row. The initial checkpoint starts at sequence zero. A previously accepted batch is identified by session and starting sequence; its digest permits exact retry checks after its database payload has been removed. Different chunking is a conflict, not automatic deduplication.],
       [Session search is bounded and supports a user reference. Range retrieval is ordered and bounded. The object adapter returns compressed bytes; reconstruction verifies the stored content digest after decompression.],
