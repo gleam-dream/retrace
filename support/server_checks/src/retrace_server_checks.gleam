@@ -1,5 +1,6 @@
 //// Separate consumer: fault injection through the public object-store contract.
 
+import concurrent_read_checks
 import envoy
 import gleam/erlang/process
 import gleam/io
@@ -65,6 +66,7 @@ pub fn main() {
   let assert Ok(_) = server.fence(db, "never-admitted")
   let assert Ok(True) = server.erase_next(db, remove, 3600)
   let assert Ok(False) = server.erase_next(db, remove, 3600)
+  concurrent_read_checks.run(db, store)
   bounded_check(db, remove)
   race_check(db, store, remove)
   let unadmitted = sample("never-admitted")

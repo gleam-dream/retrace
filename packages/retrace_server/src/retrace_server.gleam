@@ -451,32 +451,77 @@ pub fn read(
   id: String,
   after: Int,
 ) -> Result(List(Batch), Error) {
-  use _ <- result.try(require_live(db, id))
-  use chunks <- result.try(
-    pog.query(
-      "SELECT session_id,start_sequence,payload,digest,object_key FROM retrace_chunks WHERE session_id=$1 AND end_sequence>$2 ORDER BY start_sequence LIMIT 128",
-    )
-    |> pog.parameter(pog.text(id))
-    |> pog.parameter(pog.int(after))
-    |> pog.returning(chunk_decoder())
-    |> pog.execute(db)
-    |> result.map_error(Database),
+  use chunks <- result.try(read_chunks(db, id, after))
+  use batches <- result.try(
+    list.try_map(chunks, fn(chunk) { read_chunk(store, chunk) }),
   )
-  list.try_map(chunks.rows, fn(chunk) {
-    use payload <- result.try(case chunk.payload {
-      Some(payload) -> Ok(payload)
-      None -> {
-        use body <- result.try(
-          store.get(chunk.object_key) |> result.map_error(Storage),
-        )
-        decompress(body) |> result.map_error(fn(_) { CorruptArchive })
-      }
-    })
-    case digest(payload) == chunk.digest {
-      False -> Error(CorruptArchive)
-      True -> wire.decode_batch(payload) |> result.map_error(InvalidBatch)
+  use _ <- result.try(require_live(db, id))
+  Ok(batches)
+}
+
+/// Read the same ordered, verified page as `read`, with independent adapter calls
+/// bounded to `concurrency` (clamped to 1..16). The adapter must be safe to invoke
+/// from different processes and bound its external I/O. All read-owned workers
+/// terminate before return or when the caller dies; borrowed resources are never
+/// stopped. An adapter exception becomes `Storage(Unavailable)`. A deletion
+/// fence committed while the page was loading refuses the result.
+pub fn read_concurrent(
+  db: pog.Connection,
+  store: ObjectStore,
+  id: String,
+  after: Int,
+  concurrency: Int,
+) -> Result(List(Batch), Error) {
+  use chunks <- result.try(read_chunks(db, id, after))
+  use batches <- result.try(
+    read_concurrent_chunks(
+      chunks,
+      int.clamp(concurrency, min: 1, max: 16),
+      fn(chunk) { read_chunk(store, chunk) },
+    ),
+  )
+  use _ <- result.try(require_live(db, id))
+  Ok(batches)
+}
+
+@external(erlang, "retrace_server_ffi", "read_concurrent_chunks")
+fn read_concurrent_chunks(
+  chunks: List(Chunk),
+  concurrency: Int,
+  read: fn(Chunk) -> Result(Batch, Error),
+) -> Result(List(Batch), Error)
+
+fn read_chunks(
+  db: pog.Connection,
+  id: String,
+  after: Int,
+) -> Result(List(Chunk), Error) {
+  use _ <- result.try(require_live(db, id))
+  pog.query(
+    "SELECT session_id,start_sequence,payload,digest,object_key FROM retrace_chunks WHERE session_id=$1 AND end_sequence>$2 ORDER BY start_sequence LIMIT 128",
+  )
+  |> pog.parameter(pog.text(id))
+  |> pog.parameter(pog.int(after))
+  |> pog.returning(chunk_decoder())
+  |> pog.execute(db)
+  |> result.map(fn(rows) { rows.rows })
+  |> result.map_error(Database)
+}
+
+fn read_chunk(store: ObjectStore, chunk: Chunk) -> Result(Batch, Error) {
+  use payload <- result.try(case chunk.payload {
+    Some(payload) -> Ok(payload)
+    None -> {
+      use body <- result.try(
+        store.get(chunk.object_key) |> result.map_error(Storage),
+      )
+      decompress(body) |> result.map_error(fn(_) { CorruptArchive })
     }
   })
+  case digest(payload) == chunk.digest {
+    False -> Error(CorruptArchive)
+    True -> wire.decode_batch(payload) |> result.map_error(InvalidBatch)
+  }
 }
 
 /// Exact user-reference filtering; empty filter lists the 100 latest sessions.

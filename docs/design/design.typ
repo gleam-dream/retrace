@@ -90,6 +90,16 @@
       #when[the collector restarts and the viewer requests that session]
       #then[the session remains searchable and its recording is fetched and checked before playback]
     ]
+    #behavior(title: "Concurrent retrieval preserves ordered evidence", level: "boundary", area: "Retrieval")[
+      #given[a caller opts into concurrent reads from an adapter safe for independent read calls]
+      #when[a bounded archived range is retrieved]
+      #then[concurrency stays within the requested bounded budget, results remain in recording order, every payload is verified, and any failed object refuses the whole range]
+    ]
+    #behavior(title: "Read workers remain scoped to their caller", level: "boundary", area: "Retrieval")[
+      #given[a concurrent range read has outstanding adapter calls]
+      #when[the read completes, fails or loses its caller]
+      #then[its read workers terminate without stopping borrowed resources; a deletion fence observed before return refuses the range]
+    ]
     #behavior(title: "Erasure fences delivery and archival", level: "boundary", area: "Retention")[
       #given[a caller-authorized session deletion]
       #when[the caller commits a fence and drives erasure]
@@ -99,7 +109,7 @@
       [The host owns retention deadlines, authorization, backup restoration and recurring erasure. Permanent opaque tombstones prevent late delivery. Recorded object keys remain for repeated deletion after an ambiguous remote PUT; completed erasure does not establish removal from provider versions or backups.],
       [Database states are pending, with payload and digest, and archived, with object key and digest. Upload precedes committing the archived state. A crash before that commit can leave an orphan object; the deterministic key makes retry safe. Failed upload never clears the database payload.],
       [Admission locks the session row. The initial checkpoint starts at sequence zero. A previously accepted batch is identified by session and starting sequence; its digest permits exact retry checks after its database payload has been removed. Different chunking is a conflict, not automatic deduplication.],
-      [Session search is bounded and supports a user reference. Range retrieval is ordered and bounded. The object adapter returns compressed bytes; reconstruction verifies the stored content digest after decompression.],
+      [Session search is bounded and supports a user reference. Range retrieval is ordered and bounded to 128 batches. Serial reads retain their calling-process compatibility. Opt-in concurrent reads clamp their worker budget to one through sixteen and require adapters safe for independent calls. Workers belong only to the synchronous read; adapter operations must bound their own external I/O. The object adapter returns compressed bytes; reconstruction verifies the stored content digest after decompression. A final tombstone check refuses a read fenced while its objects were being fetched.],
       [The server package borrows a database pool and object-store functions. The development collector owns the pool and periodic archive worker. Storage functions have explicit read/write failures; no package starts hidden background workers.],
     )
   ])
