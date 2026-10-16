@@ -9,6 +9,7 @@ import retrace
 import retrace/wire
 import retrace_server as server
 import retrace_server/directory
+import segment_checks
 
 pub fn main() {
   let assert Ok(url) = envoy.get("DATABASE_URL")
@@ -77,6 +78,7 @@ pub fn main() {
       Error(Nil)
     })
   let assert Ok([]) = server.read(db, store, "rolled-back", 0)
+  segment_checks.run(db, store, root)
   io.println(
     "PASS archival failure/recovery, integrity, bounded erasure, deletion retry, active archive fence, pre-admission fence, late PUT reconciliation and caller transaction rollback",
   )
