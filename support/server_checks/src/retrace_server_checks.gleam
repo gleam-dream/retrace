@@ -1,5 +1,6 @@
 //// Separate consumer: fault injection through the public object-store contract.
 
+import concurrent_read_checks
 import envoy
 import gleam/erlang/process
 import gleam/io
@@ -8,6 +9,7 @@ import retrace
 import retrace/wire
 import retrace_server as server
 import retrace_server/directory
+import segment_checks
 
 pub fn main() {
   let assert Ok(url) = envoy.get("DATABASE_URL")
@@ -65,6 +67,7 @@ pub fn main() {
   let assert Ok(_) = server.fence(db, "never-admitted")
   let assert Ok(True) = server.erase_next(db, remove, 3600)
   let assert Ok(False) = server.erase_next(db, remove, 3600)
+  concurrent_read_checks.run(db, store)
   bounded_check(db, remove)
   race_check(db, store, remove)
   let unadmitted = sample("never-admitted")
@@ -75,6 +78,7 @@ pub fn main() {
       Error(Nil)
     })
   let assert Ok([]) = server.read(db, store, "rolled-back", 0)
+  segment_checks.run(db, store, root)
   io.println(
     "PASS archival failure/recovery, integrity, bounded erasure, deletion retry, active archive fence, pre-admission fence, late PUT reconciliation and caller transaction rollback",
   )

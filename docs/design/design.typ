@@ -85,10 +85,30 @@
       #when[object upload fails]
       #then[the database copy remains readable and eligible for a later retry]
     ]
+    #behavior(title: "Session archives preserve whole batches", level: "boundary", area: "Archival")[
+      #given[an idle session with original durable batch receipts]
+      #when[the host compacts it or appends a late batch]
+      #then[at most 1000 entries occupy each current generation, a session no larger than that stays in one object when archivable, and original checkpoints, page order and exact-retry identities remain unchanged]
+    ]
+    #behavior(title: "Publication has a durable recovery source", level: "boundary", area: "Archival")[
+      #given[a persisted archive plan with its payload and fixed object key]
+      #when[PUT, verification or the publishing worker fails]
+      #then[the old sources remain authoritative until verified publication commits; a replacement worker can resume the plan and a deletion fence inventories every possible generation]
+    ]
     #behavior(title: "Archived sessions remain replayable", level: "boundary", area: "Retrieval")[
       #given[a batch was successfully archived]
       #when[the collector restarts and the viewer requests that session]
       #then[the session remains searchable and its recording is fetched and checked before playback]
+    ]
+    #behavior(title: "Concurrent retrieval preserves ordered evidence", level: "boundary", area: "Retrieval")[
+      #given[a caller opts into concurrent reads from an adapter safe for independent read calls]
+      #when[a bounded archived range is retrieved]
+      #then[concurrency stays within the requested bounded budget, results remain in recording order, every payload is verified, and any failed object refuses the whole range]
+    ]
+    #behavior(title: "Read workers remain scoped to their caller", level: "boundary", area: "Retrieval")[
+      #given[a concurrent range read has outstanding adapter calls]
+      #when[the read completes, fails or loses its caller]
+      #then[its read workers terminate without stopping borrowed resources; a deletion fence observed before return refuses the range]
     ]
     #behavior(title: "Erasure fences delivery and archival", level: "boundary", area: "Retention")[
       #given[a caller-authorized session deletion]
@@ -97,9 +117,13 @@
     ]
     #points(
       [The host owns retention deadlines, authorization, backup restoration and recurring erasure. Permanent opaque tombstones prevent late delivery. Recorded object keys remain for repeated deletion after an ambiguous remote PUT; completed erasure does not establish removal from provider versions or backups.],
-      [Database states are pending, with payload and digest, and archived, with object key and digest. Upload precedes committing the archived state. A crash before that commit can leave an orphan object; the deterministic key makes retry safe. Failed upload never clears the database payload.],
+      [Batch receipts retain their original range and digest after archival. The legacy archive operation stores one batch per object; the opt-in session operation groups whole original batches greedily into segments of at most 1000 entries. A session at or below that count has one current object when archivable. Only entry count creates another segment; checkpoints and retry receipts are never rechunked. Host-configured inactivity, ordinarily 60 seconds, makes work eligible without relying on browser shutdown. #adr(9)],
+      [Immutable archive generations move from planned to current to retired. A plan commits its key, digest and complete payload before any remote PUT. Publication verifies a GET against the exact planned bytes before clearing database batch payloads and changing pointers. A crash or uncertain PUT leaves a durable plan for retry and an inventoried key for erasure. A late batch replaces its preceding segment if the whole batch fits. Superseded generations never become current again.],
+      [A decoded segment is limited to 32 MiB. Larger groups retain their existing sources and receive a durable deferral until the session advances; byte size does not create premature segments. At most one planned payload per session temporarily duplicates up to 32 MiB in PostgreSQL, which hosts must count in capacity policy. Decompression stops at the byte limit.],
+      [Preparation snapshots sources under a short session lock, reads objects without holding that lock, and rechecks the original source pointers and complete segment coverage before committing a plan. Legacy reads use windows of at most sixteen one-MiB objects and a running byte budget; existing segment objects are fetched individually. Concurrent admission beyond the snapshot range remains safe. Publication holds the session lock while uploading, verifying and replacing pointers; adapters must bound external I/O.],
+      [Retired keys are eligible for immediate cleanup in passes of at most eight. Later DELETE reconciliation uses the host interval. Cleanup rechecks that neither batches nor an active plan reference the key; the registry retains retired keys for fencing and ambiguous late-PUT reconciliation. Old per-batch objects remain readable and are automatically eligible for idle compaction.],
       [Admission locks the session row. The initial checkpoint starts at sequence zero. A previously accepted batch is identified by session and starting sequence; its digest permits exact retry checks after its database payload has been removed. Different chunking is a conflict, not automatic deduplication.],
-      [Session search is bounded and supports a user reference. Range retrieval is ordered and bounded. The object adapter returns compressed bytes; reconstruction verifies the stored content digest after decompression.],
+      [Session search is bounded and supports a user reference. Range retrieval is ordered and bounded to 128 batches. Serial reads retain their calling-process compatibility. Opt-in concurrent reads clamp their worker budget to one through sixteen and require adapters safe for independent calls. Workers belong only to the synchronous read; adapter operations must bound their own external I/O. Each page fetches a shared object once and verifies both its envelope and original batch identities. The object adapter returns compressed bytes; reconstruction verifies the exact stored content digest after bounded decompression. A missing object permits one authoritative pointer refresh only when its source changed; corrupt content never falls back. A final tombstone check refuses a read fenced while its objects were being fetched.],
       [The server package borrows a database pool and object-store functions. The development collector owns the pool and periodic archive worker. Storage functions have explicit read/write failures; no package starts hidden background workers.],
     )
   ])
