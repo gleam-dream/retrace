@@ -78,10 +78,13 @@ test("progressive windows start before later pages and preserve whole checkpoint
   assert.equal(reads, 1);
   assert.equal(first.after, 1);
   assert.equal(first.complete, false);
+  assert.equal(first.pageEnd, false);
   const second = await reader.next();
   assert.equal(reads, 1);
   assert.equal(second.after, 2);
-  assert.equal((await reader.next()).after, 3);
+  const pageEnd = await reader.next();
+  assert.equal(pageEnd.after, 3);
+  assert.equal(pageEnd.pageEnd, true);
   const last = await reader.next();
   assert.equal(reads, 2);
   assert.equal(last.complete, true);

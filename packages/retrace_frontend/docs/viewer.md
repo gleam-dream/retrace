@@ -92,8 +92,11 @@ waiting for more network responses. The source's page count bounds batches, not
 entries. The complete selected recording is still bounded by `maxEntries` and
 `maxBytes`; no session history is cached by this viewer.
 
-Subsequent windows prefetch after the frame acknowledges its loaded prefix. The
-same frame receives the existing `load`/`seek` protocol, so historical artifacts
+After first playback, the viewer coalesces the remaining checked windows from a
+page into one frame update. It reads at most one page ahead while that update is
+being reconstructed; it never waits for another page to fill an update. Fetching
+and reconstruction overlap without concurrent reads or frame updates, and the
+same total entry/byte budgets include prefetched data. The same frame receives the existing `load`/`seek` protocol, so historical artifacts
 need no rebuild; each update reconstructs the cumulative prefix and restores the
 current playhead. The timeline extends only as validated data arrives and pauses
 at its loaded end. This avoids claiming a known session end or a seekable interval
