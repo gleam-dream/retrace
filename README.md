@@ -157,10 +157,11 @@ Inside the Nix shell:
 
 ```sh
 bash dev/check.sh                 # both core targets, consumer builds, web bundle
+node dev/progressive-viewer-browser-check.mjs # self-contained progressive viewer browser gate
 # With dev/services.sh, app (5190) and viewer (5191) running:
 python3 dev/backend-check.py      # real PostgreSQL + signed local S3 requests
 bash dev/server-check.sh          # isolated DB; injected archive failures/recovery
-node dev/browser-check.mjs        # offline queue, full view, timing, inert replay
+node dev/browser-check.mjs        # offline queue, full view, timing, inert and progressive replay
 node dev/basic-browser-check.mjs       # default browser consumer (5193)
 node dev/composition-browser-check.mjs # advanced custom adapters (5190)
 node dev/viewer-api-browser-check.mjs  # cancellation, remount, typed viewport (5193)

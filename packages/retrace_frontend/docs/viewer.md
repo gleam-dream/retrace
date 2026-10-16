@@ -60,3 +60,43 @@ It does not add live subscriptions, lazy seek or an unbounded cache.
 See [the standard viewer](../../../examples/advanced/viewer/src/retrace_viewer_example.gleam),
 [the custom advanced source](../../../examples/advanced/src/retrace_example/local_archive.gleam)
 and [adoption journey](../../../docs/adopting-lustre.md).
+
+## Progressive JavaScript viewer
+
+The JavaScript `createViewer` entrypoint accepts `progressive: true` or a
+configuration object. This is opt-in; the typed Gleam mount and existing callers
+continue to load a complete bounded range. For a hosted viewer:
+
+```javascript
+createViewer(root, {
+  listSessions,
+  readRange,
+  resolveArtifact,
+  frameMode: "opaque",
+  maxEntries: 5000,
+  progressive: {
+    windowMs: 300000,
+    windowEntries: 256,
+    windowBytes: 1024 * 1024,
+    maxBytes: 32 * 1024 * 1024,
+    pageSize: 128,
+  },
+});
+```
+
+The first validated page is immediately eligible for playback. Each window keeps
+whole original batches and targets the configured duration, entries and encoded
+bytes; a single batch can exceed a time/entry target but never the wire batch
+limit (128 entries, one MiB). Page boundaries also end a window rather than
+waiting for more network responses. The source's page count bounds batches, not
+entries. The complete selected recording is still bounded by `maxEntries` and
+`maxBytes`; no session history is cached by this viewer.
+
+Subsequent windows prefetch after the frame acknowledges its loaded prefix. The
+same frame receives the existing `load`/`seek` protocol, so historical artifacts
+need no rebuild; each update reconstructs the cumulative prefix and restores the
+current playhead. The timeline extends only as validated data arrives and pauses
+at its loaded end. This avoids claiming a known session end or a seekable interval
+that has not loaded. A later read failure keeps the loaded prefix playable and
+shows a retry action; selection or disposal aborts pending work and fences late
+replies. Authentication and hiding protected data remain the host's responsibility.

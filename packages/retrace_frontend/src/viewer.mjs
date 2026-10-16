@@ -1,5 +1,5 @@
 import { positionAt, advance, clusters, previousTime } from "./timeline.mjs";
-import { loadRange } from "./range.mjs";
+import { loadRange, createRangeReader } from "./range.mjs";
 import { channelPolicy, acceptsMessage } from "./channel.mjs";
 const format = (ms) =>
   `${Math.floor(ms / 60000)}:${((ms / 1000) % 60).toFixed(1).padStart(4, "0")}`;
@@ -20,6 +20,7 @@ export function createViewer(
     labelEvent = (e) => e.label || e.kind,
     maxEntries = 5000,
     frameMode = "same-origin",
+    progressive = false,
   },
 ) {
   const channel = channelPolicy(frameMode, location.origin);
@@ -57,7 +58,18 @@ export function createViewer(
     rows = [],
     disposed = false,
     reading,
-    searching;
+    searching,
+    rangeReader,
+    batches = [],
+    rangeComplete = true,
+    rangeLoading = false,
+    rangeError = "",
+    loaded = false,
+    requestedTime,
+    prefetch = 0;
+  const retry = node("button", "retry-range", "Retry loading remaining events");
+  retry.hidden = true;
+  $(".timeline-caption").append(retry);
   const params = new URL(location.href).searchParams;
   $("#user").value = params.get("user") || "";
   const initialSession = params.get("session"),
@@ -67,7 +79,7 @@ export function createViewer(
   function url() {
     const target = new URL(location.href);
     target.searchParams.set("session", selected);
-    target.searchParams.set("t", String(Math.floor(time)));
+    target.searchParams.set("t", String(Math.floor(requestedTime ?? time)));
     if ($("#user").value) target.searchParams.set("user", $("#user").value);
     else target.searchParams.delete("user");
     history.replaceState(null, "", target);
@@ -85,6 +97,8 @@ export function createViewer(
     if (events.length) url();
   }
   function fail(message) {
+    reading?.abort();
+    cancelAnimationFrame(prefetch);
     pause();
     clearTimeout(timeout);
     events = [];
@@ -167,6 +181,7 @@ export function createViewer(
     $(".next").disabled = position === events.length - 1;
   }
   function seek(value) {
+    requestedTime = undefined;
     pause();
     time = Math.max(events[0]?.elapsed || 0, Math.min(duration, value));
     render();
@@ -181,6 +196,7 @@ export function createViewer(
     else raf = requestAnimationFrame(tick);
   }
   on($(".play"), "click", () => {
+    requestedTime = undefined;
     if (playing) return pause();
     if (time >= duration) {
       time = events[0]?.elapsed || 0;
@@ -208,6 +224,51 @@ export function createViewer(
   on(document, "visibilitychange", () => {
     if (document.hidden) pause();
   });
+  function rangeStatus() {
+    $(".range-note").textContent = rangeError
+      ? `Loaded through ${format(duration)} · ${rangeError}`
+      : rangeComplete
+        ? "Loaded through last event · session end unknown"
+        : `Loaded through ${format(duration)} · loading more events…`;
+    retry.hidden = !rangeError;
+    retry.disabled = rangeLoading;
+  }
+  async function extendRange() {
+    if (!loaded || !rangeReader || rangeComplete || rangeLoading || disposed)
+      return;
+    const generation = request;
+    rangeLoading = true;
+    rangeError = "";
+    rangeStatus();
+    try {
+      const next = await rangeReader.next();
+      if (generation !== request || disposed) return;
+      rangeComplete = next.complete;
+      if (!next.batches.length) {
+        rangeLoading = false;
+        rangeStatus();
+        return;
+      }
+      batches.push(...next.batches);
+      frame.dataset.recording = JSON.stringify(batches);
+      send("load", { body: frame.dataset.recording });
+      // Historical artifacts understand only load and seek. Keep their frame,
+      // then restore the playhead when reconstruction acknowledges the prefix.
+      timeout = setTimeout(
+        () =>
+          fail(
+            "The replay artifact did not respond to the next range. Reload recording to retry.",
+          ),
+        10000,
+      );
+    } catch (error) {
+      if (generation !== request || disposed) return;
+      rangeLoading = false;
+      rangeError = error.message;
+      rangeStatus();
+    }
+  }
+  on(retry, "click", extendRange);
   on(window, "message", (event) => {
     const data = event.data;
     if (
@@ -221,11 +282,14 @@ export function createViewer(
     } else if (data.type === "error") fail(String(data.body));
     else if (data.type === "loaded") {
       clearTimeout(timeout);
+      const previousTime =
+        requestedTime ?? (loaded ? time : Number(frame.dataset.startTime || 0));
       try {
         events = JSON.parse(data.body);
         if (
           !Array.isArray(events) ||
           !events.length ||
+          events.length > maxEntries + 1 ||
           events.some(
             (e, i) =>
               !Number.isSafeInteger(e.elapsed) ||
@@ -245,22 +309,18 @@ export function createViewer(
         return fail("Artifact returned invalid timeline metadata.");
       }
       duration = events.at(-1).elapsed;
+      if (requestedTime <= duration || rangeComplete) requestedTime = undefined;
       position = -1;
-      time = Math.max(
-        events[0].elapsed,
-        Math.min(
-          duration,
-          frame.dataset.startTime ? Number(frame.dataset.startTime) : 0,
-        ),
-      );
+      time = Math.max(events[0].elapsed, Math.min(duration, previousTime));
       $(".stage-message").hidden = true;
       $(".frame-size").hidden = false;
       $(".scrubber").min = String(events[0].elapsed);
       $(".scrubber").max = String(Math.max(1, duration));
       $(".scrubber").disabled = false;
       $(".play").disabled = duration === events[0].elapsed;
-      $(".range-note").textContent =
-        "Loaded through last event · session end unknown";
+      loaded = true;
+      rangeLoading = false;
+      rangeStatus();
       $(".count").textContent = String(events.length - 1);
       const list = $(".events ol");
       list.replaceChildren();
@@ -280,15 +340,29 @@ export function createViewer(
       fit();
       markers();
       url();
+      if (progressive)
+        prefetch = requestAnimationFrame(() => void extendRange());
     }
   });
   async function open(id, startTime = 0) {
     const generation = ++request;
+    cancelAnimationFrame(prefetch);
     reading?.abort();
     reading = new AbortController();
     pause();
     events = [];
+    rangeReader = undefined;
+    batches = [];
+    rangeComplete = true;
+    rangeLoading = false;
+    rangeError = "";
+    loaded = false;
+    requestedTime = undefined;
+    retry.hidden = true;
     selected = id;
+    time = startTime;
+    requestedTime = startTime;
+    url();
     token = crypto.randomUUID();
     clearTimeout(timeout);
     // Browsers can clear window.name when an already connected iframe enters an
@@ -314,11 +388,23 @@ export function createViewer(
     for (const item of root.querySelectorAll(".session-row"))
       item.setAttribute("aria-pressed", String(item.dataset.id === id));
     try {
-      const batches = await loadRange(readRange, id, {
+      const options = {
+        ...(progressive || {}),
         after: Number(new URL(location.href).searchParams.get("after") || 0),
         maxEntries,
         signal: reading.signal,
-      });
+      };
+      if (progressive) {
+        rangeReader = createRangeReader(readRange, id, options);
+        const first = await rangeReader.next();
+        if (generation !== request || disposed) return;
+        batches = first.batches;
+        rangeComplete = first.complete;
+      } else {
+        const all = await loadRange(readRange, id, options);
+        if (generation !== request || disposed) return;
+        batches = all;
+      }
       if (generation !== request || disposed) return;
       if (!batches.length)
         throw Error("This session has no recorded events yet. Try reloading.");
@@ -430,12 +516,20 @@ export function createViewer(
     if (disposed) return;
     disposed = true;
     request++;
+    cancelAnimationFrame(prefetch);
     pause();
     clearTimeout(timeout);
     signal.abort();
     reading?.abort();
     searching?.abort();
     resize.disconnect();
+    batches = [];
+    rangeReader = undefined;
+    events = [];
+    rows = [];
+    delete frame.dataset.recording;
+    frame.removeAttribute("src");
+    frame.removeAttribute("srcdoc");
     root.replaceChildren();
   };
 }

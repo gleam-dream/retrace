@@ -188,3 +188,5 @@ try {
 } finally {
   await browser.close();
 }
+
+await import("./progressive-viewer-browser-check.mjs");
