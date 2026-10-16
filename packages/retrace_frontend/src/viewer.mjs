@@ -63,6 +63,8 @@ export function createViewer(
     batches = [],
     rangeComplete = true,
     rangeLoading = false,
+    rangePending,
+    frameLoading = false,
     rangeError = "",
     loaded = false,
     requestedTime,
@@ -97,7 +99,11 @@ export function createViewer(
     if (events.length) url();
   }
   function fail(message) {
+    request++;
     reading?.abort();
+    rangePending = undefined;
+    rangeReader = undefined;
+    loaded = false;
     cancelAnimationFrame(prefetch);
     pause();
     clearTimeout(timeout);
@@ -233,34 +239,57 @@ export function createViewer(
     retry.hidden = !rangeError;
     retry.disabled = rangeLoading;
   }
+  function publishRange() {
+    if (!loaded || frameLoading || !rangePending || disposed) return;
+    const next = rangePending;
+    rangePending = undefined;
+    rangeComplete = next.complete;
+    if (!next.batches.length) {
+      rangeStatus();
+      return;
+    }
+    batches.push(...next.batches);
+    frameLoading = true;
+    send("load", { body: JSON.stringify(batches) });
+    // Historical artifacts reconstruct the cumulative prefix. Keep one update
+    // in flight and one checked page ahead, overlapping retrieval with that work.
+    timeout = setTimeout(
+      () =>
+        fail(
+          "The replay artifact did not respond to the next range. Reload recording to retry.",
+        ),
+      10000,
+    );
+    void extendRange();
+  }
   async function extendRange() {
-    if (!loaded || !rangeReader || rangeComplete || rangeLoading || disposed)
+    if (
+      !loaded ||
+      !rangeReader ||
+      rangeComplete ||
+      rangeLoading ||
+      rangePending ||
+      rangeError ||
+      disposed
+    )
       return;
     const generation = request;
+    const reader = rangeReader;
     rangeLoading = true;
-    rangeError = "";
     rangeStatus();
     try {
-      const next = await rangeReader.next();
-      if (generation !== request || disposed) return;
-      rangeComplete = next.complete;
-      if (!next.batches.length) {
-        rangeLoading = false;
-        rangeStatus();
-        return;
-      }
-      batches.push(...next.batches);
-      frame.dataset.recording = JSON.stringify(batches);
-      send("load", { body: frame.dataset.recording });
-      // Historical artifacts understand only load and seek. Keep their frame,
-      // then restore the playhead when reconstruction acknowledges the prefix.
-      timeout = setTimeout(
-        () =>
-          fail(
-            "The replay artifact did not respond to the next range. Reload recording to retry.",
-          ),
-        10000,
-      );
+      const pending = [];
+      let next;
+      do {
+        next = await reader.next();
+        if (generation !== request || disposed) return;
+        pending.push(...next.batches);
+        // Coalesce windows already validated in the same page; never wait for
+        // another page to fill an update or retain more than one page ahead.
+      } while (!next.pageEnd);
+      rangePending = { batches: pending, complete: next.complete };
+      rangeLoading = false;
+      publishRange();
     } catch (error) {
       if (generation !== request || disposed) return;
       rangeLoading = false;
@@ -268,7 +297,10 @@ export function createViewer(
       rangeStatus();
     }
   }
-  on(retry, "click", extendRange);
+  on(retry, "click", () => {
+    rangeError = "";
+    void extendRange();
+  });
   on(window, "message", (event) => {
     const data = event.data;
     if (
@@ -278,7 +310,9 @@ export function createViewer(
     if (data.type === "ready") {
       if (data.build !== build)
         return fail("The artifact build does not match this session.");
+      frameLoading = true;
       send("load", { body: frame.dataset.recording });
+      delete frame.dataset.recording;
     } else if (data.type === "error") fail(String(data.body));
     else if (data.type === "loaded") {
       clearTimeout(timeout);
@@ -319,7 +353,7 @@ export function createViewer(
       $(".scrubber").disabled = false;
       $(".play").disabled = duration === events[0].elapsed;
       loaded = true;
-      rangeLoading = false;
+      frameLoading = false;
       rangeStatus();
       $(".count").textContent = String(events.length - 1);
       const list = $(".events ol");
@@ -341,7 +375,10 @@ export function createViewer(
       markers();
       url();
       if (progressive)
-        prefetch = requestAnimationFrame(() => void extendRange());
+        prefetch = requestAnimationFrame(() => {
+          publishRange();
+          void extendRange();
+        });
     }
   });
   async function open(id, startTime = 0) {
@@ -355,6 +392,8 @@ export function createViewer(
     batches = [];
     rangeComplete = true;
     rangeLoading = false;
+    rangePending = undefined;
+    frameLoading = false;
     rangeError = "";
     loaded = false;
     requestedTime = undefined;
@@ -525,6 +564,7 @@ export function createViewer(
     resize.disconnect();
     batches = [];
     rangeReader = undefined;
+    rangePending = undefined;
     events = [];
     rows = [];
     delete frame.dataset.recording;

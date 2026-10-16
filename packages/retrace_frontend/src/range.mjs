@@ -59,7 +59,7 @@ export async function loadRange(
 // A selected recording owns one reader. next() commits a fully checked page
 // before exposing whole-batch windows, and failures leave its cursor retryable.
 // Pages and the retained recording have separate byte/entry bounds. No prefetch
-// occurs here: the viewer starts the next read only after frame acknowledgement.
+// occurs here: the viewer owns scheduling and may read ahead by one page.
 export function createRangeReader(
   readRange,
   id,
@@ -221,6 +221,7 @@ export function createRangeReader(
           batches,
           after: last,
           complete: complete && !pending.length,
+          pageEnd: !pending.length,
           start,
           end,
           entries,

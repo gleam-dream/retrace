@@ -159,6 +159,167 @@ try {
   await expect(page.locator(".clock")).toHaveText("3:00.0 / 4:00.0");
   await expect(page.frameLocator("iframe").locator("output")).toHaveText("3");
   await page.evaluate(() => window.stop());
+  // Hold the historical frame acknowledgement. Retrieval must continue by one
+  // page, coalesce that page's windows, and stop there until the frame is ready.
+  await page.evaluate(async () => {
+    const { createViewer } = await import("/viewer.mjs");
+    history.replaceState(null, "", "?session=pipeline");
+    window.pageReads = [];
+    window.failAhead = true;
+    window.frameLoads = [];
+    window.acknowledge = [];
+    const session = {
+      id: "pipeline",
+      user_ref: "pipeline",
+      build: "v1",
+      contract: "c",
+      platform: "web",
+    };
+    const frame = `<script>
+      const token = window.name.slice(8), origin = ${JSON.stringify(location.origin)};
+      const report = (type, body) => parent.postMessage({api:1, token, type, build:'v1', body}, origin);
+      addEventListener('message', e => {
+        if(e.source !== parent || e.origin !== origin || e.data.token !== token) return;
+        if(e.data.type === 'load') {
+          const batches = JSON.parse(e.data.body).map(JSON.parse);
+          const all = [batches[0].checkpoint, ...batches.flatMap(b => b.entries)].map(e => ({sequence:e.sequence,elapsed:e.elapsed_ms,viewport:{width:390,height:844},kind:'event'}));
+          report('pending', JSON.stringify(all));
+        }
+        if(e.data.type === 'ack') report('loaded', e.data.body);
+      });
+      report('ready');
+    <\/script>`;
+    window.capturePending = (e) => {
+      if (e.data?.type !== "pending") return;
+      const body = e.data.body;
+      window.frameLoads.push(JSON.parse(body).at(-1).sequence);
+      window.acknowledge.push(() =>
+        e.source.postMessage({ ...e.data, type: "ack" }, "*"),
+      );
+    };
+    addEventListener("message", window.capturePending);
+    window.pipelineConfig = {
+      ...window.viewerConfig,
+      progressive: { windowEntries: 1 },
+      readRange: async (id, { after }) => {
+        window.pageReads.push(after);
+        if (after === 3 && window.failAhead)
+          throw Error("Prefetch interrupted");
+        return {
+          batches: Array.from({ length: 3 }, (_, i) =>
+            JSON.stringify({
+              session,
+              checkpoint: {
+                sequence: after + i,
+                elapsed_ms: (after + i) * 1000,
+              },
+              entries: [
+                { sequence: after + i + 1, elapsed_ms: (after + i + 1) * 1000 },
+              ],
+            }),
+          ),
+          next: after === 9 ? null : after + 3,
+        };
+      },
+      resolveArtifact: async () => ({
+        api: 1,
+        build: "v1",
+        isolated_html: frame,
+      }),
+    };
+    window.stop = createViewer(
+      document.querySelector("#viewer"),
+      window.pipelineConfig,
+    );
+  });
+  await expect.poll(() => page.evaluate(() => window.frameLoads)).toEqual([1]);
+  await page.evaluate(() => window.acknowledge.shift()());
+  await expect(page.locator(".count")).toHaveText("1");
+  await expect
+    .poll(() => page.evaluate(() => window.frameLoads))
+    .toEqual([1, 3]);
+  // A failed read while reconstruction is held must not erase the prefix or
+  // automatically retry when the frame acknowledges its previous update.
+  await expect
+    .poll(() => page.evaluate(() => window.pageReads))
+    .toEqual([0, 3]);
+  await expect(
+    page.getByRole("button", { name: "Retry loading remaining events" }),
+  ).toBeVisible();
+  await expect(page.locator(".count")).toHaveText("1");
+  await page.evaluate(() => window.acknowledge.shift()());
+  await expect(page.locator(".count")).toHaveText("3");
+  await expect(
+    page.getByRole("button", { name: "Retry loading remaining events" }),
+  ).toBeVisible();
+  await expect
+    .poll(() => page.evaluate(() => window.pageReads))
+    .toEqual([0, 3]);
+  await page.evaluate(() => (window.failAhead = false));
+  await page
+    .getByRole("button", { name: "Retry loading remaining events" })
+    .click();
+  // Retry starts at the failed cursor; its next page arrives before this frame
+  // acknowledges the six-entry prefix, but a fourth page cannot be requested.
+  await expect
+    .poll(() => page.evaluate(() => window.frameLoads))
+    .toEqual([1, 3, 6]);
+  await expect
+    .poll(() => page.evaluate(() => window.pageReads))
+    .toEqual([0, 3, 3, 6]);
+  await page.evaluate(() => window.acknowledge.shift()());
+  await expect
+    .poll(() => page.evaluate(() => window.frameLoads))
+    .toEqual([1, 3, 6, 9]);
+  await page.evaluate(() => window.acknowledge.shift()());
+  await expect
+    .poll(() => page.evaluate(() => window.pageReads))
+    .toEqual([0, 3, 3, 6, 9]);
+  await expect
+    .poll(() => page.evaluate(() => window.frameLoads))
+    .toEqual([1, 3, 6, 9, 12]);
+  await page.evaluate(() => window.acknowledge.shift()());
+  await expect(page.locator(".count")).toHaveText("12");
+  await expect(page.locator(".range-note")).toContainText("last event");
+  // Dispose with a checked, nonterminal page buffered behind a held frame.
+  await page.evaluate(async () => {
+    window.stop();
+    window.pageReads = [];
+    window.frameLoads = [];
+    window.acknowledge = [];
+    const { createViewer } = await import("/viewer.mjs");
+    window.stop = createViewer(
+      document.querySelector("#viewer"),
+      window.pipelineConfig,
+    );
+  });
+  await expect.poll(() => page.evaluate(() => window.frameLoads)).toEqual([1]);
+  await page.evaluate(() => window.acknowledge.shift()());
+  await expect
+    .poll(() => page.evaluate(() => window.frameLoads))
+    .toEqual([1, 3]);
+  await expect
+    .poll(() => page.evaluate(() => window.pageReads))
+    .toEqual([0, 3]);
+  await page.evaluate(async () => {
+    window.stop();
+    const { createViewer } = await import("/viewer.mjs");
+    history.replaceState(null, "", "?session=one");
+    window.stop = createViewer(
+      document.querySelector("#viewer"),
+      window.viewerConfig,
+    );
+    window.acknowledge.shift()();
+  });
+  await expect(page.locator(".count")).toHaveText("2");
+  await expect(page.locator(".session-heading h2")).toHaveText("one · Web");
+  await expect
+    .poll(() => page.evaluate(() => window.pageReads))
+    .toEqual([0, 3]);
+  await page.evaluate(() => {
+    window.stop();
+    removeEventListener("message", window.capturePending);
+  });
   if (errors.length) throw Error(errors.join("\n"));
   console.log(
     "PASS progressive first paint, retained-prefix retry, stable playhead/frame, cancellation and stale-session fencing",
