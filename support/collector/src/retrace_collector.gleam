@@ -99,7 +99,7 @@ fn failed(error: retrace_server.Error) -> Response(mist.ResponseData) {
   let status = case error {
     retrace_server.Conflict | retrace_server.OutOfOrder(_, _) -> 409
     retrace_server.InvalidBatch(_) -> 400
-    retrace_server.NotFound -> 404
+    retrace_server.NotFound | retrace_server.Deleted -> 404
     retrace_server.Database(_)
     | retrace_server.Storage(_)
     | retrace_server.CorruptArchive -> 503

@@ -1,35 +1,47 @@
 import { Result$Ok, Result$Error } from "./gleam.mjs";
 import { Error$ElementNotFound } from "../lustre/lustre.mjs";
-let connected = false;
-// Artifacts and host are served together. This is a trusted-code boundary.
-const token = () => new URL(location.href).searchParams.get("token");
-export function listen(build, load, seek) {
-  connected = true;
-  const receive = ({ source, origin, data }) => {
-    if (
-      source !== parent ||
-      origin !== location.origin ||
-      data?.token !== token() ||
-      data.api !== 1
-    )
-      return;
+import { acceptsMessage, frameToken, trustedOrigin } from "./channel.mjs";
+let connection;
+export function ownOrigin() {
+  return location.origin;
+}
+export function validateParentOrigin(value) {
+  try {
+    return Result$Ok(trustedOrigin(value));
+  } catch (error) {
+    return Result$Error(error.message);
+  }
+}
+export function listen(
+  build,
+  load,
+  seek,
+  parentOrigin = location.origin,
+  isolated = false,
+) {
+  trustedOrigin(parentOrigin);
+  const token = frameToken(location.href, window.name || "", isolated);
+  const current = { token, parentOrigin };
+  connection = current;
+  const receive = (event) => {
+    if (!acceptsMessage(event, parent, parentOrigin, token)) return;
+    const data = event.data;
     if (data.type === "load" && typeof data.body === "string") load(data.body);
     if (data.type === "seek" && Number.isSafeInteger(data.sequence))
       seek(data.sequence);
   };
   window.addEventListener("message", receive);
-  parent.postMessage(
-    { api: 1, token: token(), type: "ready", build },
-    location.origin,
-  );
+  if (token)
+    parent.postMessage({ api: 1, token, type: "ready", build }, parentOrigin);
   return () => {
-    connected = false;
+    if (connection === current) connection = undefined;
     window.removeEventListener("message", receive);
   };
 }
 export function report(type, body) {
-  if (!connected) return;
-  parent.postMessage({ api: 1, token: token(), type, body }, location.origin);
+  if (!connection?.token) return;
+  const { token, parentOrigin } = connection;
+  parent.postMessage({ api: 1, token, type, body }, parentOrigin);
 }
 
 export function prepareTarget(selector) {

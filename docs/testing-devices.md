@@ -105,3 +105,12 @@ Browser checks, simulator checks and physical-device observations are separate
 evidence. A successful build or installation does not establish that a phone
 uploaded a session. Confirm that by finding its session ID and replaying its
 recorded native result on the Mac.
+
+### Opaque replay frame lifecycle
+
+Run `npm ci` in `examples/advanced`, then run
+`CHROME_BIN=/path/to/chrome nix develop --command node dev/opaque-frame-check.mjs`.
+Omit `CHROME_BIN` to use Playwright's installed Chromium. This disposable loopback
+fixture verifies the real viewer's script-only opaque frame loads and seeks,
+creates a new named browsing context for every recording load, and disposes it.
+The Node protocol tests cannot certify browser `window.name` navigation behavior.

@@ -212,6 +212,33 @@ pub fn mount(
   selector: String,
   max_entries: Int,
 ) -> Result(fn() -> Nil, lustre.Error) {
+  mount_for_parent(app, build, selector, max_entries, own_origin(), False)
+}
+
+/// Mount an opaque sandbox frame for an explicitly trusted HTTP(S) parent.
+/// Parent configuration must come from the trusted artifact assembler, never a
+/// recording, query parameter, referrer, or message. The viewer supplies the
+/// channel nonce through the iframe name before assigning its srcdoc document.
+pub fn mount_with_parent_origin(
+  app: ReplayModule(model, message, error),
+  build: String,
+  selector: String,
+  max_entries: Int,
+  trusted_parent_origin: String,
+) -> Result(fn() -> Nil, String) {
+  use origin <- result.try(validate_parent_origin(trusted_parent_origin))
+  mount_for_parent(app, build, selector, max_entries, origin, True)
+  |> result.map_error(string.inspect)
+}
+
+fn mount_for_parent(
+  app: ReplayModule(model, message, error),
+  build: String,
+  selector: String,
+  max_entries: Int,
+  parent_origin: String,
+  isolated: Bool,
+) -> Result(fn() -> Nil, lustre.Error) {
   let init = fn(_: Nil) {
     #(Frame([], 0, "Waiting for a recording"), effect.none())
   }
@@ -280,6 +307,8 @@ pub fn mount(
       build,
       fn(body) { lustre.send(runtime, lustre.dispatch(Load(body))) },
       fn(sequence) { lustre.send(runtime, lustre.dispatch(Seek(sequence))) },
+      parent_origin,
+      isolated,
     )
   Ok(
     once(fn() {
@@ -295,6 +324,8 @@ fn listen(
   build: String,
   load: fn(String) -> Nil,
   seek: fn(Int) -> Nil,
+  parent_origin: String,
+  isolated: Bool,
 ) -> fn() -> Nil
 
 @external(javascript, "../replay_ffi.mjs", "report")
@@ -307,3 +338,9 @@ fn prepare_target(
 
 @external(javascript, "../replay_ffi.mjs", "once")
 fn once(dispose: fn() -> Nil) -> fn() -> Nil
+
+@external(javascript, "../replay_ffi.mjs", "ownOrigin")
+fn own_origin() -> String
+
+@external(javascript, "../replay_ffi.mjs", "validateParentOrigin")
+fn validate_parent_origin(origin: String) -> Result(String, String)
