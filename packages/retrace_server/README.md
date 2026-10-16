@@ -82,6 +82,12 @@ workers, not an independently running provider operation or a resource created
 by an adapter. Hosts still own authorization, global admission limits, and
 external transport lifetimes; the cap applies to each read, not all callers.
 
+Scheduling uses `gleam_erlang/process` linked processes, typed subjects and
+selectors. The `exception` package guards foreign adapter calls and guarantees
+worker cleanup while unwinding; no custom Erlang concurrency loop is used.
+Native bindings remain for hashing, bounded gzip handling and atomic filesystem
+storage. Fault-injection helpers in the test consumer exercise raw BEAM exits.
+
 `dev/server-check.sh` exercises 513-entry pagination through PostgreSQL and local
 archived bytes, mixed inline/archive pages, delayed out-of-order reads, worker
 bounds, missing/corrupt objects, caller death, adapter crashes, and deletion while

@@ -12,6 +12,7 @@ import gleam/string
 import pog
 import retrace/wire.{type Batch, type Session}
 import retrace_server/internal/archive
+import retrace_server/internal/read_worker
 
 pub type StorageError {
   Unavailable
@@ -513,12 +514,13 @@ pub fn read_concurrent(
   read_page(db, store, id, after, Some(int.clamp(concurrency, min: 1, max: 16)))
 }
 
-@external(erlang, "retrace_server_ffi", "read_concurrent_chunks")
 fn read_concurrent_values(
   values: List(a),
   concurrency: Int,
   read: fn(a) -> Result(b, Error),
-) -> Result(List(b), Error)
+) -> Result(List(b), Error) {
+  read_worker.run(values, concurrency, read, Storage(Unavailable))
+}
 
 fn read_page(
   db: pog.Connection,
