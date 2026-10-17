@@ -83,8 +83,8 @@
             lefthook
             git
             gleam
-            beam28Packages.erlang
-            rebar3
+            beam29Packages.erlang
+            beam29Packages.rebar3
             python3
             nodejs_24
             rustup
