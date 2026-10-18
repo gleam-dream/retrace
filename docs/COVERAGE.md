@@ -11,7 +11,7 @@
 | `packages/retrace_frontend/src/timeline.mjs`, `style.mjs`                               | captured | Replay: Viewer; Example applications                                                      |
 | `packages/retrace_frontend/test/`                                                       | captured | Recording and Replay behavior rules                                                       |
 | `packages/retrace_server/`                                                              | captured | Archive: Admission; Archival generations; Retrieval; Retention and erasure                |
-| `support/collector/`                                                                    | captured | Archive: Hosting and storage ownership                                                    |
+| `support/collector/`                                                                    | captured | Archive: Collector protocol, hosting and storage ownership                                |
 | `support/server_checks/`                                                                | captured | Archive: executable failure and recovery evidence; Retrace: Distribution and verification |
 | `support/client_checks/`                                                                | captured | Recording: Typed adapters; separate consumer evidence                                     |
 | `examples/basic/`, `examples/advanced/`                                                 | captured | Replay: Example applications; Build identity and replay artifacts                         |

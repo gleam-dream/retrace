@@ -23,12 +23,6 @@
     pending-entry(title: "Client retry and rejected-batch policy", kind: "ruling", since: "2026-10-10")[
       The client retries on fixed delays and a permanently rejected batch blocks its queue. A quarantine and backoff policy needs an owner decision.
     ],
-    pending-entry(title: "Owner acceptance of the decisions recorded on 2026-10-17", kind: "ruling", since: "2026-10-17")[
-      The decision records on build identity, Git distribution, Simulator evidence, progressive loading, the opaque replay frame, erasure fences, concurrent archive reads and compiled usage examples were written from retired guides. They carry no recorded owner acceptance.
-    ],
-    pending-entry(title: "Collector route contract", kind: "ruling", since: "2026-10-17")[
-      The development collector serves the session listing and batch page routes that the default viewer reader calls. The layer states no behavior rules for those routes, so an owner decision must settle whether they are a supported contract.
-    ],
     pending-entry(title: "Evidence runs carried over from retired guides", kind: "verify", since: "2026-10-17")[
       The statements on the native desktop check, the Simulator scenario and the physical-phone path describe runs that this review did not repeat. It confirmed only that the retained check files exist.
     ],

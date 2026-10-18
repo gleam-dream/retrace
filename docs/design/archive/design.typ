@@ -218,13 +218,71 @@
       )
     ]
   ])
+  #section(title: "Collector protocol", lead: "A collector serves batch submission, session listing and batch paging, and the packaged client and viewer depend on exactly these three operations.", body: [
+    #behavior(title: "A submitted batch is acknowledged after it is durable", level: "boundary", area: "Collector protocol")[
+      #given[a batch within the size limit whose checkpoint matches the session's committed position]
+      #when[a caller submits the batch]
+      #then[the batch is committed before any acknowledgement is sent]
+      #then[the acknowledgement names the session and the end position of the batch]
+    ]
+    #behavior(title: "Concurrent identical submissions are acknowledged once", level: "boundary", area: "Collector protocol")[
+      #given[several callers submit the same accepted batch at the same time]
+      #when[the submissions race]
+      #then[every caller receives the same acknowledgement]
+      #then[the session position advances only once]
+    ]
+    #behavior(title: "Conflicting and out-of-order submissions are refused", level: "boundary", area: "Collector protocol")[
+      #given[a session with a committed position]
+      #when[a caller submits a batch whose checkpoint does not match that position or whose content differs from an accepted range]
+      #then[the submission is refused as conflicting]
+      #then[the stored session and its batches are unchanged]
+    ]
+    #behavior(title: "Invalid and oversized submissions are refused", level: "boundary", area: "Collector protocol")[
+      #given[a submission that is larger than one MiB, or whose entries are not contiguous or exceed the entry limit]
+      #when[a caller submits it]
+      #then[an oversized submission is refused as oversized before it is decoded]
+      #then[any other invalid submission is refused as invalid]
+      #then[no stored state changes]
+    ]
+    #behavior(title: "Storage failure is reported without internal detail", level: "boundary", area: "Collector protocol")[
+      #given[durable storage is unavailable or a stored archive fails verification]
+      #when[a caller uses any collector operation]
+      #then[the caller learns only that recording storage is unavailable]
+      #then[storage diagnostics and credentials are not exposed]
+    ]
+    #behavior(title: "Session listing is filtered, recent and bounded", level: "boundary", area: "Collector protocol")[
+      #given[sessions recorded for several user references]
+      #when[a caller lists sessions with a user reference or without one]
+      #then[a listing with a user reference returns only sessions whose user reference equals it exactly]
+      #then[a listing without one returns the sessions of every user reference]
+      #then[either listing returns at most the 100 most recently updated sessions, newest first]
+      #then[each entry reports the session, its committed position, its elapsed recorded time and the counts of batches awaiting archival and already archived]
+    ]
+    #behavior(title: "Batch paging returns whole batches in recording order", level: "boundary", area: "Collector protocol")[
+      #given[a session with accepted batches, some of them archived]
+      #when[a caller pages batches after a position]
+      #then[the page holds at most 128 whole batches whose range ends after that position, in recording order]
+      #then[an archived batch is verified before it is returned]
+      #then[a page requested after the last accepted position is empty]
+      #then[a request without a position starts at the beginning of the session]
+    ]
+    #behavior(title: "Paging a session with no accepted batches is empty", level: "boundary", area: "Collector protocol")[
+      #given[a session identifier with no accepted batches and no erasure fence]
+      #when[a caller pages its batches]
+      #then[the page is empty, as for a known session paged past its end]
+    ]
+    #points(
+      [The three operations are the contract between the packaged client, the viewer and any collector that serves them. A collector may add operations, and it may not change or remove these. #adr(18)],
+      [A collector authorizes callers and scopes tenants itself, because the server package does not. The development collector does neither, binds to loopback by default and stays outside the hosted-deployment policy.],
+      [Refusals reach callers as distinguishable categories: conflicting, invalid, oversized, erased session and unavailable storage. The client's handling of each category belongs to the separate client retry and rejected-batch ruling.],
+    )
+  ])
   #section(title: "Hosting and storage ownership", lead: "The server package borrows its resources, and the development collector is the example host.", body: [
     #points(
       [The server package borrows a database pool and object-store functions. It starts no HTTP listener, pool or background process on import, and storage functions report explicit read and write failures.],
       [The package supplies an S3-compatible adapter that takes credentials, bucket and region, and a local directory adapter. A caller may supply its own #term("term-object-store"), so the S3 adapter works with HTTPS and any region and the directory adapter keeps admission unchanged.],
       [The schema helper creates the initial schema and its archive tables, and the host chooses when to run it before upgraded workers start. It is not a versioned migration system. The runtime role needs select, insert, update and delete privileges on those tables and no sequence privileges.],
-      [The development #term("term-collector") owns the pool and the periodic archive worker. It exposes local routes for batch admission, session search, ordered batch pages, one archive attempt and health. It is unauthenticated, binds to loopback by default, and stores local data in ignored directories.],
-      [The collector's session listing returns the latest 100 summaries with an optional exact user filter. Its batch page returns up to 128 encoded batch strings after a given sequence. Its admission route answers with the session ID and acknowledgement after the commit.],
+      [The development #term("term-collector") owns the pool and the periodic archive worker. It serves the collector protocol above and adds local routes for one archive attempt and health. It is unauthenticated, binds to loopback by default, and stores local data in ignored directories.],
     )
   ])
 ]
