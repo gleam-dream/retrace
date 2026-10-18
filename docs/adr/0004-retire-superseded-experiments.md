@@ -1,4 +1,4 @@
-# Retire superseded experiments
+# Retire superseded experiments and keep their attribution
 
 <a id="adr-0004"></a>
 
@@ -12,11 +12,16 @@ optional example-inspector dependency described in ADR 0001.
 
 Simulator capture is retained regression evidence, so it moves from prototypes
 to dev/simulator with its executable inputs. Completed delivery briefs move to
-docs/history, explicitly outside current design authority. Recorded sessions,
+a history directory, explicitly outside current design authority. Recorded sessions,
 local database/object storage and retained historical replay artifacts are kept.
 
-The adoption guide describes current work and a proposed Gleam-first direction.
-No new instrumentation wrapper or viewer package is declared implemented by this
-cleanup. Standard paths should eventually require no application-authored FFI;
+The adoption material of that period described current work and a proposed Gleam-first
+direction; it now lives as compiled examples (ADR 0017). No new instrumentation wrapper
+or viewer package is declared implemented by this cleanup. Standard paths should eventually require no application-authored FFI;
 application privacy, deterministic replay semantics and deployment ownership
 remain explicit decisions.
+
+The retired Time Travel sources are removed. The attribution notice retains the
+upstream repository and base revision, the evaluated fork and its revision, the
+author and the MIT license. Time Travel is not a runtime dependency, and no
+upstream pull request was opened.

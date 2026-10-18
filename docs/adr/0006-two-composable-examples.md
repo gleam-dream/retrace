@@ -23,3 +23,7 @@ No new example-specific library wrapper is introduced. Applications retain
 native domain types and pure reducers. Package defaults and public extension
 points keep the same validation, bounds and explicit cleanup contracts.
 Historical replay assets and stored sessions are preserved during relocation.
+
+Example presentation conventions (palette, typography, layout and component
+treatment) are defined by the example stylesheets. No separate style document is
+maintained, so the stylesheets are the single source for presentation.

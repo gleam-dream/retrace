@@ -1,4 +1,4 @@
-# Consolidate frontend distribution
+# Distribute the frontend as one JavaScript package
 
 <a id="adr-0008"></a>
 
