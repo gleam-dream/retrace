@@ -1,10 +1,10 @@
 # Retrace frontend
 
-One JavaScript package for browser and Tauri recording, Lustre reconstruction,
-and the optional inspection UI. It depends on portable `retrace` and Lustre;
-PostgreSQL and S3 dependencies remain in `retrace_server`.
+One JavaScript package for browser and Tauri recording, Lustre reconstruction, and the
+optional inspection UI. It depends on portable `retrace` and Lustre. PostgreSQL and S3
+dependencies stay in `retrace_server`. The package is experimental and not on Hex.
 
-## Choose modules for your application
+## Modules
 
 | Module                            | Purpose                                                                          |
 | --------------------------------- | -------------------------------------------------------------------------------- |
@@ -16,26 +16,56 @@ PostgreSQL and S3 dependencies remain in `retrace_server`.
 | `retrace_frontend/viewport`       | Read or observe browser/WebView dimensions                                       |
 | `retrace_frontend/viewer`         | Mount the default inspection UI with replaceable sources and artifact resolution |
 
-```gleam
-import retrace_frontend/capture
-import retrace_frontend/client
-import retrace_frontend/replay
-import retrace_frontend/viewer
+Import only the modules an entrypoint uses. Importing the package starts no queue,
+viewer, worker or network request, and a browser-only build needs no Tauri plugin.
+
+## Install
+
+Declare the package from the Git subdirectory, with `retrace` at the same revision:
+
+```toml
+[dependencies]
+retrace = { git = "https://github.com/gleam-dream/retrace.git", ref = "v0.1.0" }
+retrace_frontend = { git = "https://github.com/gleam-dream/retrace.git", ref = "v0.1.0", path = "packages/retrace_frontend" }
 ```
 
-Import only the modules your entrypoint uses. Capture, replay frames and the viewer
-retain separate startup and cleanup functions. Importing this package starts no
-queue, viewer, worker or network request. Tauri persistence still requires explicit
-selection and the native store plugin; a browser-only build needs no Tauri plugin.
-All frontend consumers now resolve the Lustre dependency, including delivery-only
-and viewer-only consumers.
+## Quick usage
 
-Start with the [adoption guide](../../docs/adopting-lustre.md), then consult
-[delivery and custom adapters](docs/client.md), [capture and replay](docs/replay.md),
-or [viewer configuration](docs/viewer.md).
+Connect capture once and observe each accepted transition with the previous state:
 
-There are exactly two application examples: [basic](../../examples/basic/README.md)
-and [advanced](../../examples/advanced/README.md). Install from the Git subdirectory
-`packages/retrace_frontend` following the [installation guide](../../docs/releases.md).
-Declare `retrace` directly as well when your application imports the core or wire
-modules, using the same Git revision. This package is experimental and is not on Hex.
+```gleam
+let #(recording, save) =
+  capture.observe(
+    model.capture,
+    model.stock,
+    command,
+    domain.encode,
+    domain.encode_command,
+  )
+```
+
+Mount a replay module in the historical entrypoint and retain its disposer:
+
+```gleam
+let assert Ok(dispose) =
+  replay.mount(domain.replay_module(), domain.build, "#app", 5000)
+```
+
+Mount the viewer from a separate page, and retain and call the returned disposer:
+
+```gleam
+let resolver =
+  viewer.artifacts("/artifacts")
+  |> viewer.with_development(domain.build, domain.contract, "/frame.html")
+let assert Ok(dispose) =
+  viewer.new(viewer.collector("http://127.0.0.1:4417"), resolver)
+  |> viewer.mount("#viewer")
+```
+
+These excerpts come from the [basic example](../../examples/basic/README.md), which compiles
+and runs them. Custom storage and upload build from typed cold tasks with `client/adapter`,
+and custom sources and resolvers return typed tasks to the viewer; the
+[advanced example](../../examples/advanced/README.md) runs both. The
+[usage topics](../../examples/README.md#usage-topics) list every topic with its check.
+Module contracts are in the [design](../../docs/design/recording/design.typ) for capture and
+delivery and the [replay design](../../docs/design/replay/design.typ) for replay and the viewer.

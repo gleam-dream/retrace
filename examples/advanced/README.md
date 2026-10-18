@@ -1,11 +1,10 @@
 # Advanced: native capture and replaceable adapters
 
-The membership application uses the same public capture and replay APIs as the
-[basic example](../basic/README.md). It adds Tauri, recorded viewport changes,
-native command results, immutable release artifacts and an alternate local
-archive. Application types and effects remain application-owned.
+A membership app that uses the same public APIs as the [basic example](../basic/README.md)
+and adds Tauri, recorded viewport changes, native command results, immutable replay
+artifacts and an alternate local archive.
 
-## Collector and Tauri path
+## Run
 
 Start `bash dev/services.sh` in the repository's Nix shell. In another terminal:
 
@@ -15,87 +14,60 @@ npm ci
 npm run dev
 ```
 
-Open http://127.0.0.1:5190/?user=Ada. Start the separate inspection endpoint in a
-third terminal inside Nix:
+Open http://127.0.0.1:5190/?user=Ada. Start the viewer in a third terminal inside Nix:
 
 ```sh
 npm --prefix examples/advanced/viewer run dev
 ```
 
-Open http://127.0.0.1:5191/?user=Ada. This viewer belongs to the advanced example;
-it is not another adoption example. Add `&diagnostics` to the live app URL to
-inspect capture and delivery status.
-
-Browser capture selects IndexedDB; Tauri selects `retrace_frontend/client/tauri.storage()`.
-Both use HTTP delivery and the default collector reader. Device information
-comes from a real Rust command in Tauri; its result becomes a recorded message.
-Replay displays the stored result without invoking the command again.
-
-For desktop Tauri, stop the app's Vite process and run `npm run tauri -- dev`.
-For the tested iOS Simulator workflow, follow
-[dev/simulator](../../dev/simulator/README.md). Platform SDKs remain host tools.
+Open http://127.0.0.1:5191/?user=Ada. Add `&diagnostics` to the app URL to show capture
+status. For desktop Tauri, stop the app's Vite process and run `npm run tauri -- dev`. For
+the iOS Simulator, follow [dev/simulator](../../dev/simulator/README.md).
 
 ## Custom storage without a collector
 
-With `npm run dev` running, open:
-
-- Live: http://127.0.0.1:5190/?user=Ada&storage=local
-- Viewer: http://127.0.0.1:5190/viewer/index.html?user=Ada&storage=local
-
-Both pages intentionally share port 5190: localStorage is scoped to an origin.
-The local mode stores its outbox and accepted archive separately, acknowledges
-saved ranges and implements session search/paging in Gleam. It is a browser,
-single-writer development adapter, not a production storage recommendation.
-It does not require the collector. Its mutable development renderer uses the
-current application code.
-
-The same `capture.observe` and `ReplayModule` are used in both modes. The adapter
-selection changes only storage, transport and the viewer's source. Native Tauri
-runs retain the normal collector path by default.
-
-## Public seams you can replace independently
-
-| Seam              | Advanced example                                               | Library retains                                      |
-| ----------------- | -------------------------------------------------------------- | ---------------------------------------------------- |
-| `Storage`         | Tauri store or custom localStorage outbox                      | Pending admission, ordering and queue delivery       |
-| `Transport`       | HTTP or local archive acknowledgement                          | Receipt checking, deadlines and retry                |
-| `viewer.Source`   | Collector reader or Gleam archive search/ranges                | Cancellation, range checks and retained-entry bounds |
-| `viewer.Resolver` | Build manifest lookup with explicit development override       | Frame/build/origin checks                            |
-| `ReplayModule`    | Membership model, pure reducer, complete view and event labels | Checkpoint verification and inert reconstruction     |
-| `viewer.Config`   | Explicit 2,000-entry budget                                    | Playback controls and resource cleanup               |
-
-Custom adapters use `retrace_frontend/client/adapter.storage` and `adapter.transport`;
-no Promise or AbortSignal code is required in the application. Synchronous
-browser IO is wrapped with `adapter.defer`. Custom storage must enforce durable
-limits and idempotent writes. Custom
-transports must honor cancellation. Viewer tasks return a cancellation function;
-synchronous archive reads return a no-op. Applications own safe projections and
-callback lifetimes, and can use the lower-level packages without the Lustre hook.
+With `npm run dev` running, open the live page at
+http://127.0.0.1:5190/?user=Ada&storage=local and the viewer at
+http://127.0.0.1:5190/viewer/index.html?user=Ada&storage=local. Both share port 5190
+because local storage is scoped to an origin.
 
 ## Files
 
 - `src/retrace_example.gleam`: live application and adapter selection.
-- `src/retrace_example/domain.gleam`, `screen.gleam`, `replay.gleam`: application
-  meaning, shared view and typed replay module.
-- `src/retrace_example/local_archive.gleam`: custom typed source plus storage and
-  constructors through `retrace_frontend/client/adapter`. Queue policy and archive receipts
-  are Gleam code; `src/local_archive_ffi.mjs` only binds browser IO and URL selection.
-- `src/retrace_example/api.gleam` and `src/example_ffi.mjs`: application-specific
-  environment/build values, typed viewport translation and native command access.
-- `src/retrace_example/frame.gleam`: inert historical application entrypoint.
-- `viewer/src/retrace_viewer_example.gleam`: source/resolver/config composition.
+- `src/retrace_example/domain.gleam`, `screen.gleam`, `replay.gleam`: application meaning, shared view and typed replay module.
+- `src/retrace_example/local_archive.gleam`: custom typed source plus storage and transport constructors.
+- `src/retrace_example/frame.gleam`: inert historical entrypoint.
+- `viewer/src/retrace_viewer_example.gleam`: source, resolver and config composition.
 - `src-tauri/`: native shell, storage plugin, permissions and Rust command.
-- `dev/build.mjs`: application-owned live/replay build identity and preservation.
-- `dev/history.test.mjs`: reconstruction and compatibility checks.
+- `dev/build.mjs`, `dev/identity.mjs`: application-owned build identity and artifact preservation.
 
-`npm run build` builds the live application and preserves its historical renderer
-under `viewer/public/artifacts/<build>/`. Existing IDs cannot be overwritten.
-This directory contains generated historical executables, not additional examples.
-The [build guide](../../docs/application-builds.md) explains CI/deployment ownership.
-
-Tests from the repository root inside Nix:
+## Build and checks
 
 ```sh
-node dev/browser-check.mjs              # collector path; ports 5190 and 5191
-node dev/composition-browser-check.mjs  # custom local path; port 5190
+npm run build                           # live bundle plus preserved replay artifact
+RETRACE_BUILD_ID=membership-ios-482 npm run build
+node --test dev/history.test.mjs dev/build.test.mjs dev/local_archive.test.mjs
+# From the repository root, with services, app and viewer running:
+node dev/browser-check.mjs              # collector path, ports 5190 and 5191
+node dev/composition-browser-check.mjs  # custom local path, port 5190
 ```
+
+## Native smoke check
+
+On macOS arm64 with the local collector running:
+
+```sh
+npm run tauri -- build --debug --no-bundle --features native-smoke
+RETRACE_NATIVE_SMOKE=1 ./src-tauri/target/debug/retrace-example
+```
+
+The opt-in feature drives the real WebView, native store plugin, Rust command and upload.
+It is excluded from ordinary builds.
+
+`build.test.mjs` runs the build recipe into scratch locations: one build ID in the live and
+replay bundles, source provenance in the manifest, and a refusal to overwrite a published
+build. `local_archive.test.mjs` runs the custom storage, upload and viewer source with an
+in-memory stand-in for browser storage. Replay output goes to
+`viewer/public/artifacts/<build>/`. Build identity, artifact preservation and adapter seams
+are specified in the [replay design](../../docs/design/replay/design.typ), and the
+[usage topics](../README.md#usage-topics) map each topic to its check.

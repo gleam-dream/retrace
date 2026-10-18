@@ -9,5 +9,4 @@ material. The MIT notice is retained in [LICENSE](LICENSE).
 - Fork revision: `87a367680c1193228db8d6c791611b7514efdc86`
 - Author: Bradley Mehder; license: MIT.
 
-Time Travel is not a runtime dependency. The unused vendored inspector and retired
-experiments have been removed. No upstream PR was opened.
+Time Travel is not a runtime dependency.
