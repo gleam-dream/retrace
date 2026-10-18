@@ -61,7 +61,6 @@
             "**/dist/**"
             "vendor/**"
             ".local/**"
-            "docs/benchmarks/*-provenance.json"
           ];
           programs.gleam.enable = true;
           programs.nixfmt.enable = true;
