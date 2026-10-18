@@ -20,7 +20,7 @@
 | `dev/check.sh`, `dev/git-consumer-check.sh`                                             | captured | Retrace: Distribution and verification                                                    |
 | `dev/*-check.*`, `dev/native-check.js`, `dev/opaque-frame-check.mjs`, `dev/services.sh` | captured | Retrace: Distribution and verification                                                    |
 | `dev/simulator/`                                                                        | captured | Retrace: Distribution and verification (Simulator evidence)                               |
-| Nix, manifests, locks, hooks, ignore rules, `.envrc`, `.gitattributes`                  | standard | Development and packaging conventions                                                     |
+| Nix, manifests, locks, hooks, ignore rules, `.envrc`, `.gitattributes`, `.claude/`      | standard | Development and packaging conventions                                                     |
 | `LICENSE`, `THIRD_PARTY.md`                                                             | standard | Licensing and attribution                                                                 |
-| `README.md`, `AGENTS.md`, per-package and per-example `README.md`                       | standard | Entry points and agent instructions that point into the design layer                      |
+| `README.md`, `AGENTS.md`, per-package, per-example and `support/` `README.md`           | standard | Entry points and agent instructions that point into the design layer                      |
 | `docs/design/`, `docs/adr/`, `docs/CONTEXT-MAP.md`                                      | standard | Current contracts, vocabulary and decision rationale                                      |

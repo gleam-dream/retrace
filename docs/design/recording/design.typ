@@ -11,6 +11,11 @@
     #invariant(title: "A batch stays queued until its matching acknowledgement", enforcement: "mechanism")[Only an acknowledgement matching the batch session and final sequence removes the batch from the #term("term-delivery-queue"). A late reply from a cancelled upload cannot remove it.]
     #principle(title: "The application owns safe meaning", lens: "composition")[Applications select replay-safe messages, state projections, codecs, user references and #term("term-replay-contract") identifiers before capture. Reducer determinism and purity are application obligations that function types cannot prove.]
   ])
+  #pending-ledger(
+    pending-entry(title: "Native store and capture statements carried over from retired guides", kind: "verify", since: "2026-10-17")[
+      The statements on Tauri native store durability, one writing window per queue and the capture failure paths come from retired guides. This review confirmed the batch limits, the five-second upload deadline, the fixed retry delay and the acknowledgement check, and not the native store behavior.
+    ],
+  )
   #section(title: "Session and recording cursor", lead: "Pure values retain application types and report invalid history without advancing a player.", body: [
     #behavior(title: "Invalid history preserves the replay cursor", level: "boundary", area: "Reconstruction")[
       #given[a player at a validated checkpoint]
@@ -38,6 +43,80 @@
       [An application may group up to 128 entries in one batch to reduce request and object counts. It supplies the checkpoint that precedes the group.],
     )
   ])
+  #section(title: "Domain model", lead: "Recording owns five application-neutral values: the session, the recording cursor, the entry, the checkpoint and the batch.", body: [
+    #subsection(title: "Recording domain")[
+      #entity(
+        title: "Session",
+        description: [One application's ordered recording, fixed to an application build and replay contract.],
+        kind: "entity",
+        owner: "recording",
+        lifecycle: "immutable",
+        domain: "recording",
+        tint: "teal",
+      )[
+        #attribute(name: "Identifier", type: "Session identifier", provenance: "authored")[the identifier that is unique per recording and independent of the user reference]
+        #attribute(name: "User reference", type: "User reference", provenance: "authored")[searchable metadata that never authorizes access]
+        #attribute(name: "Build identity", type: "Build identity", provenance: "authored")[the identity of the application build that recorded the session]
+        #attribute(name: "Replay contract", type: "Replay contract identifier", provenance: "authored")[the application's compatibility identifier for its schemas and reducer semantics]
+        #attribute(name: "Platform", type: "Platform name", provenance: "authored")[the platform that ran the application, such as web or Tauri]
+        #relates(cardinality: "1 : n")[is carried by many *Batches*]
+      ]
+      #entity(
+        title: "Recording cursor",
+        description: [The position of a recorder in a session.],
+        kind: "value-object",
+        owner: "recording",
+        lifecycle: "immutable",
+        domain: "recording",
+        tint: "teal",
+      )[
+        #attribute(name: "Next sequence", type: "Sequence number", provenance: "derived")[the sequence of the next entry, advanced once per entry]
+        #attribute(name: "Latest elapsed time", type: "Elapsed time", provenance: "observed")[the latest clock reading, which never moves backwards]
+      ]
+      #entity(
+        title: "Entry",
+        description: [One accepted, safe application message inside a session.],
+        kind: "event",
+        owner: "recording",
+        lifecycle: "immutable",
+        domain: "recording",
+        tint: "teal",
+      )[
+        #attribute(name: "Sequence", type: "Sequence number", provenance: "derived")[the position the recording cursor assigned]
+        #attribute(name: "Elapsed time", type: "Elapsed time", provenance: "observed")[the monotonic clock reading when the application accepted the transition]
+        #attribute(name: "Application event", type: "Encoded application event", provenance: "authored")[the message the application chose to record, encoded as a bounded JSON string]
+        #relates(cardinality: "n : 1")[belongs to one *Batch*]
+      ]
+      #entity(
+        title: "Checkpoint",
+        description: [A replay-safe application model at a known session sequence and elapsed time.],
+        kind: "value-object",
+        owner: "recording",
+        lifecycle: "immutable",
+        domain: "recording",
+        tint: "teal",
+      )[
+        #attribute(name: "Sequence", type: "Sequence number", provenance: "derived")[the session position the model describes]
+        #attribute(name: "Elapsed time", type: "Elapsed time", provenance: "observed")[the clock reading at that position]
+        #attribute(name: "Application model", type: "Encoded application model", provenance: "authored")[the safe projection of application state that starts reconstruction]
+        #relates(cardinality: "1 : 1")[precedes the entries of one *Batch*]
+      ]
+      #entity(
+        title: "Batch",
+        description: [An immutable checkpoint followed by a bounded contiguous range of entries, the unit of upload, deduplication and replay pagination.],
+        kind: "aggregate",
+        owner: "recording",
+        lifecycle: "immutable",
+        domain: "recording",
+        tint: "teal",
+      )[
+        #attribute(name: "Entry range", type: "Contiguous sequence range", provenance: "derived")[one to 128 entries whose sequences follow the checkpoint without gaps]
+        #attribute(name: "Encoded size", type: "Byte count", provenance: "derived")[the size of the encoded batch, at most one MiB]
+        #relates(cardinality: "n : 1")[belongs to one *Session*]
+        #relates(cardinality: "1 : n")[holds many *Entries*]
+      ]
+    ]
+  ])
   #section(title: "Client delivery", lead: "The client persists before uploading and removes a batch only after its matching acknowledgement.", body: [
     #behavior(title: "Interrupted delivery is recoverable", level: "boundary", area: "Delivery")[
       #given[a batch confirmed as saved locally]
@@ -52,7 +131,9 @@
     #behavior(title: "Typed client adapters preserve operation ownership", level: "boundary", area: "Delivery")[
       #given[a client using application-supplied typed storage and upload operations]
       #when[an operation completes, fails or its pending upload is cancelled]
-      #then[only its first completion is observed; cancellation releases the upload and ignores late replies, while admitted storage work settles and borrowed resources remain caller-owned]
+      #then[only its first completion is observed]
+      #then[cancellation releases the upload and ignores late replies]
+      #then[admitted storage work settles and borrowed resources remain caller-owned]
     ]
     #points(
       [The client reports local save and upload acknowledgement as separate statuses through the application callback. It owns retry timers and exposes shutdown. Retry delays are fixed, and a permanently rejected batch blocks later uploads in its queue.],
@@ -92,7 +173,10 @@
     #behavior(title: "Capture coordination preserves application ownership", level: "boundary", area: "Capture composition")[
       #given[an initialized capture state and an application-approved transition]
       #when[the application observes that transition with its safe state and event codecs]
-      #then[the adapter records its checkpoint and event in order, reports persistence separately, and stops capture visibly on failure without executing or suppressing the application's effects]
+      #then[the adapter records its checkpoint and event in order]
+      #then[persistence is reported separately]
+      #then[a failure stops capture visibly]
+      #then[the application's effects are neither executed nor suppressed]
     ]
     #points(
       [Capture coordinates the core recorder and client delivery through immutable state and Lustre effects. Starting returns the state and a connection effect, and the application maps capture messages into its own message type. Delivery messages are never observed recursively.],

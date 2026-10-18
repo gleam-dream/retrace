@@ -11,11 +11,17 @@
     #invariant(title: "An isolated frame accepts only exact authority", enforcement: "mechanism")[An isolated replay frame accepts a message only from the expected window, the exact configured origin, the protocol version and the per-frame nonce.]
     #principle(title: "Keep viewer, artifact and application as separate owners", lens: "composition")[The viewer owns session navigation, playback time and artifact selection. The application owns codecs, reduction, the view and presentation projection, and the host owns storage, authorization and artifact policy.]
   ])
+  #pending-ledger(
+    pending-entry(title: "Playback and example statements carried over from retired guides", kind: "verify", since: "2026-10-17")[
+      The statements on playback timing, viewport scaling and the two example applications come from retired guides. This review confirmed the viewer budgets, the frame channel rules and the build identity recipe, and not playback timing or viewport scaling.
+    ],
+  )
   #section(title: "Replay modules and frames", lead: "An optional companion reconstructs bounded ranges using application-native types and a shared inert view.", body: [
     #behavior(title: "Application adapters preserve range identity", level: "boundary", area: "Replay composition")[
       #given[an application adapter, expected build and a bounded recorded range]
       #when[the range is reconstructed from its first checkpoint]
-      #then[all envelopes, session metadata, checkpoints and transitions must agree before any snapshots are returned; failure leaves the caller free to retry a corrected range]
+      #then[all envelopes, session metadata, checkpoints and transitions must agree before any snapshots are returned]
+      #then[a failure leaves the caller free to retry a corrected range]
     ]
     #behavior(title: "Replay frames have an explicit lifetime", level: "boundary", area: "Replay composition")[
       #given[a mounted application replay frame]
@@ -25,9 +31,11 @@
     #behavior(title: "Isolated replay channels require exact authority", level: "boundary", area: "Replay composition")[
       #given[an explicitly isolated replay frame using a verified application build]
       #when[the viewer or frame receives a protocol message]
-      #then[it accepts only the expected window, exact configured origin, protocol version and per-frame nonce; the frame never infers parent authority from a message, referrer or recording]
+      #then[it accepts only the expected window, exact configured origin, protocol version and per-frame nonce]
+      #then[the frame never infers parent authority from a message, referrer or recording]
     ]
     #points(
+      [Replay owns no stored entity. #ctx("recording") owns the session, batch and checkpoint, #ctx("archive") owns the batch receipt, and the application pipeline owns the artifact manifest.],
       [A #term("term-replay-module") is typed by model, message and error. The application supplies its codecs, deterministic reducer, equality, full view, viewport projection and event labels, and the live application and the replay entrypoint share the same view.],
       [Reconstruction validates the complete supplied range before returning snapshots. A range may begin at a nonzero checkpoint, and sequence numbers stay absolute. Every batch checkpoint is verified with the application's equality function.],
       [Typed reducer errors surface as invalid-replay failures, and decoding or compatibility failures surface as invalid-range failures. A failed call holds no mutable state, so the caller retries with corrected input.],
@@ -40,17 +48,23 @@
     #behavior(title: "Viewer adapters own cancellable work", level: "boundary", area: "Viewer composition")[
       #given[a viewer using default or application-supplied typed readers]
       #when[a request is replaced or the viewer is disposed]
-      #then[its pending reads are cancelled, stale replies cannot replace the current display, and disposal can be repeated safely]
+      #then[its pending reads are cancelled]
+      #then[stale replies cannot replace the current display]
+      #then[disposal can be repeated safely]
     ]
     #behavior(title: "Progressive replay exposes a usable prefix", level: "interface", area: "Viewer composition")[
       #given[a viewer configured for progressive loading of a bounded recording]
       #when[the first valid range is available and later ranges are still loading]
-      #then[the developer can inspect the loaded interval, subsequent ranges extend the same timeline without moving the playhead, and a later retrieval failure keeps the valid prefix available with an explicit retry]
+      #then[the developer can inspect the loaded interval]
+      #then[subsequent ranges extend the same timeline without moving the playhead]
+      #then[a later retrieval failure keeps the valid prefix available with an explicit retry]
     ]
     #behavior(title: "Progressive ranges preserve bounded evidence", level: "boundary", area: "Viewer composition")[
       #given[a progressive reader at an accepted checkpoint]
       #when[a later page changes session identity, skips an entry, reverses time or exceeds its configured budgets]
-      #then[the page is refused without advancing the accepted cursor; a corrected retry starts from that cursor and cancellation cannot commit late data]
+      #then[the page is refused without advancing the accepted cursor]
+      #then[a corrected retry starts from that cursor]
+      #then[cancellation cannot commit late data]
     ]
     #points(
       [The viewer module owns its DOM, scoped styles, playback clock, frame protocol and pending read lifetimes. It imports no Lustre and needs no Tauri plugin or database. Its containing frontend package depends on Lustre.],
@@ -78,6 +92,7 @@
         [The artifact mounts with the explicit parent origin, which rejects a noncanonical HTTP or HTTPS origin. The viewer places a fresh nonce in the frame name before assigning the document, and the frame accepts messages only from its parent window, that exact origin, the nonce and the protocol version.],
         [The viewer accepts only the selected frame window, the null origin, the nonce and the protocol version. Outgoing delivery to an opaque frame uses a wildcard target because an opaque origin cannot be named, and no inbound check becomes a wildcard. Default local frames keep same-origin URL behavior. #adr(14)],
         [Neither the channel nor the sandbox certifies application-supplied reducers as pure.],
+        [A real-browser check loads and seeks the real viewer's script-only frame on a loopback fixture. It verifies that each recording load creates a new named browsing context and disposes it, which the Node protocol tests cannot establish.],
       )
     ]
   ])
@@ -107,7 +122,10 @@
     #behavior(title: "Playback preserves recorded timing", level: "interface", area: "Replay")[
       #given[a complete validated recording range]
       #when[a developer plays or seeks within it]
-      #then[the playhead follows elapsed time, preserves gaps and displays the last state at or before that time; equal-time entries retain sequence order and appear together; previous and next navigation move between distinct timestamps]
+      #then[the playhead follows elapsed time and preserves gaps]
+      #then[the view displays the last state at or before that time]
+      #then[equal-time entries retain sequence order and appear together]
+      #then[previous and next navigation move between distinct timestamps]
     ]
     #behavior(title: "Replay preserves the application viewport", level: "interface", area: "Replay")[
       #given[a recording with application presentation state]

@@ -7,5 +7,9 @@
   (slug: "term-archive-plan", title: [Archive plan], body: [The durable record of a generation's object key, digest and complete payload, committed before any remote upload.]),
   (slug: "term-object-store", title: [Object store], body: [The caller-supplied pair of put and get functions that place and fetch archive bytes in remote storage.]),
   (slug: "term-deletion-fence", title: [Deletion fence], body: [The atomic commit that refuses admission, archival, search and reads for a session and inventories every object key of that session for erasure.]),
+  (slug: "term-admission-cursor", title: [Admission cursor], body: [The highest sequence a session has durably committed. The checkpoint of the next admitted batch must equal it.
+
+    _Avoid_: durable cursor — does not say whose position it is; recording cursor — names the recorder's position in #ctx("recording"), not the server's committed position.]),
+  (slug: "term-tombstone", title: [Tombstone], body: [The retained record that a session was fenced for erasure, held with the session's object keys so that repeated erasure can delete late-written objects without making the session readable.]),
   (slug: "term-collector", title: [Collector], body: [The development host that owns a database pool and archive worker and exposes the local routes the examples use.]),
 )

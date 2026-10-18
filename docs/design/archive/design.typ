@@ -3,16 +3,21 @@
 #let accent = "blue"
 #let body = [
   #section(title: "Foundation", lead: "Archive owns server-side admission, indexing, object archival, retrieval and erasure of recorded sessions.", body: [
-    #goal(title: "Commit every accepted batch before acknowledging it")[The server admits a #term("term-batch") in a database transaction that locks its session cursor, and returns its #term("term-acknowledgement") only after the commit.]
+    #goal(title: "Commit every accepted batch before acknowledging it")[The server admits a #term("term-batch") in a database transaction that locks its #term("term-admission-cursor"), and returns its #term("term-acknowledgement") only after the commit.]
     #goal(title: "Move accepted recordings to object storage without a loss window")[The database copy of a batch stays readable until its archive object is uploaded and verified, so an object-store outage only delays archival.]
     #goal(title: "Erase a session on caller authority")[A caller-authorized #term("term-deletion-fence") stops admission, archival, search and reads for a session, and the caller drives deletion of its objects and recording rows.]
     #no-goal(title: "A hardened hosted service")[Authentication, tenant isolation, rate limits, archive repair and a versioned migration system belong to the deployment. The development collector binds to loopback and is not a service configuration.]
     #invariant(title: "A committed batch outlives every archival failure", enforcement: "mechanism")[A failed upload, failed verification or dead worker leaves the database copy readable and eligible for retry.]
-    #invariant(title: "Admission is ordered per session", enforcement: "mechanism")[A batch is admitted only when its checkpoint matches the session's durable cursor and its fixed session metadata agrees with the stored metadata.]
+    #invariant(title: "Admission is ordered per session", enforcement: "mechanism")[A batch is admitted only when its checkpoint matches the session's #term("term-admission-cursor") and its fixed session metadata agrees with the stored metadata.]
     #invariant(title: "Original batch identity survives archival", enforcement: "mechanism")[A #term("term-batch-receipt") retains the original range and digest after the database payload is removed, so an exact retry returns the original acknowledgement.]
     #invariant(title: "A fenced session never becomes readable again", enforcement: "mechanism")[Admission, archival, search and reads refuse a fenced session, including a late object write that finishes after its worker died.]
     #principle(title: "The host owns operations and policy", lens: "composition")[The host owns the database pool, object-store configuration, worker lifetimes, retention deadlines, authorization and backup restoration. The package starts no hidden worker.]
   ])
+  #pending-ledger(
+    pending-entry(title: "Publication, fence and recovery statements carried over from retired guides", kind: "verify", since: "2026-10-17")[
+      The rules for the publication lock, the fence snapshot, plan recovery and late-object reconciliation come from retired guides. This review confirmed the numeric limits (1000 entries, 32 MiB, sixteen concurrent reads, eight keys per pass) and the generation states, and not the locking and recovery behavior.
+    ],
+  )
   #section(title: "Admission", lead: "The server serializes admission per session and distinguishes duplicates from conflicts.", body: [
     #behavior(title: "Duplicates are distinguished from conflicts", level: "boundary", area: "Admission")[
       #given[a batch was durably accepted]
@@ -20,9 +25,10 @@
       #then[identical content returns the same acknowledgement and different content is refused]
     ]
     #behavior(title: "Session admission is ordered and atomic", level: "boundary", area: "Admission")[
-      #given[a session's durable cursor]
+      #given[a session with an #term("term-admission-cursor")]
       #when[a new batch is admitted]
-      #then[its checkpoint must match that cursor and its fixed session metadata must agree before the batch and index advance together]
+      #then[the batch is refused unless its checkpoint matches that cursor and its fixed session metadata agrees with the stored metadata]
+      #then[an admitted batch and the session index advance together]
     ]
     #points(
       [Admission locks the session row inside a transaction. The initial checkpoint starts at sequence zero. Out-of-order batches are refused. #adr(1)],
@@ -31,7 +37,17 @@
       [Session search is bounded to the latest 100 sessions and supports an exact user-reference filter. Search pagination is not provided.],
     )
   ])
-  #section(title: "Archival generations", lead: "Archival packs whole batches into immutable generations and preserves the old sources until publication is verified.", body: [
+  #section(title: "Archival generations", lead: "Archival packs whole batches into immutable generations and preserves the old sources until publication is verified.", visual: sequence(
+    title: "Publish one archive generation",
+    participants: ((id: "worker", label: "Archive worker", shape: "control"), (id: "db", label: "Database", shape: "database"), (id: "store", label: "Object store", shape: "database")),
+    steps: (
+      seq-msg("worker", "db", "commit plan: key, digest, payload"),
+      seq-msg("worker", "store", "upload the planned bytes"),
+      seq-msg("worker", "store", "read back and compare with the planned bytes"),
+      seq-msg("worker", "db", "clear payloads, move pointers, mark current"),
+    ),
+    caption: [A failure at any step leaves the plan and the old sources in place, so a replacement worker resumes from the committed plan.],
+  ), body: [
     #behavior(title: "Archival failure preserves accepted data", level: "boundary", area: "Archival")[
       #given[a committed batch still held in the database]
       #when[object upload fails]
@@ -40,39 +56,48 @@
     #behavior(title: "Session archives preserve whole batches", level: "boundary", area: "Archival")[
       #given[an idle session with original durable batch receipts]
       #when[the host compacts it or appends a late batch]
-      #then[at most 1000 entries occupy each current generation, a session no larger than that stays in one object when archivable, and original checkpoints, page order and exact-retry identities remain unchanged]
+      #then[at most 1000 entries occupy each current generation]
+      #then[a session no larger than that stays in one object when archivable]
+      #then[original checkpoints, page order and exact-retry identities remain unchanged]
     ]
     #behavior(title: "Publication has a durable recovery source", level: "boundary", area: "Archival")[
       #given[a persisted archive plan with its payload and fixed object key]
-      #when[PUT, verification or the publishing worker fails]
-      #then[the old sources remain authoritative until verified publication commits; a replacement worker can resume the plan and a deletion fence inventories every possible generation]
+      #when[object upload, verification or the publishing worker fails]
+      #then[the old sources remain authoritative until verified publication commits]
+      #then[a replacement worker can resume the plan]
+      #then[a deletion fence inventories every possible generation]
     ]
     #points(
-      [A #term("term-batch-receipt") retains its original range and digest after archival. The legacy archive operation stores one batch per object. The session operation groups whole original batches greedily into #term("term-archive-segment")s of at most 1000 entries after host-configured inactivity, ordinarily 60 seconds.],
+      [A #term("term-batch-receipt") retains its original range and digest after archival. The per-batch archive operation stores one batch per object. The session operation groups whole original batches greedily into #term("term-archive-segment")s of at most 1000 entries after host-configured inactivity, ordinarily 60 seconds.],
       [A session at or below 1000 entries has one current object when archivable. Only entry count creates another segment, and checkpoints and retry receipts are never rechunked. A late batch replaces its preceding segment when the whole batch fits.],
       [An #term("term-archive-generation") moves from planned to current to retired and never becomes current again. An #term("term-archive-plan") commits its key, digest and complete payload before any remote PUT. Publication verifies a GET against the exact planned bytes before clearing database payloads and changing pointers.],
       [A decoded segment is limited to 32 MiB, and decompression stops at that limit. A larger group keeps its existing sources and receives a durable deferral until the session advances, because byte size never creates an early segment. At most one planned payload per session temporarily duplicates up to 32 MiB in the database, which hosts count in capacity policy.],
-      [Preparation snapshots sources under a short session lock, reads objects without that lock, and rechecks the original source pointers and complete segment coverage before committing a plan. Legacy reads use windows of at most sixteen one-MiB objects under a running byte budget. Admission beyond the snapshot range stays safe.],
+      [Preparation snapshots sources under a short session lock, reads objects without that lock, and rechecks the original source pointers and complete segment coverage before committing a plan. Per-batch reads use windows of at most sixteen one-MiB objects under a running byte budget. Admission beyond the snapshot range stays safe.],
       [Publication holds the session lock while it uploads, verifies and replaces pointers, so adapters bound their external I/O. A crash or uncertain PUT leaves a durable plan for retry and an inventoried key for erasure. The archive operation reports true for publication or durable deferral and false for no work or a snapshot invalidated by a competing worker.],
       [The segment object is gzip-compressed newline-delimited JSON, a versioned session and range header followed by the unchanged encoded batches. Retired keys are eligible for immediate cleanup in passes of at most eight. The reclaim operation rechecks that neither batches nor an active plan reference a key, and later deletion reconciliation follows the host interval.],
-      [Old per-batch objects stay readable and become eligible for idle compaction. A host that must avoid temporary per-batch objects does not run the legacy archive worker. #adr(9)],
+      [Old per-batch objects stay readable and become eligible for idle compaction. A host that must avoid temporary per-batch objects does not run the per-batch archive worker. #adr(9)],
     )
   ])
   #section(title: "Retrieval", lead: "Archived sessions stay replayable, and reads return verified batches in recording order.", body: [
     #behavior(title: "Archived sessions remain replayable", level: "boundary", area: "Retrieval")[
       #given[a batch was successfully archived]
       #when[the collector restarts and the viewer requests that session]
-      #then[the session remains searchable and its recording is fetched and checked before playback]
+      #then[the session remains searchable]
+      #then[its recording is fetched and checked before playback]
     ]
     #behavior(title: "Concurrent retrieval preserves ordered evidence", level: "boundary", area: "Retrieval")[
       #given[a caller opts into concurrent reads from an adapter safe for independent read calls]
       #when[a bounded archived range is retrieved]
-      #then[concurrency stays within the requested bounded budget, results remain in recording order, every payload is verified, and any failed object refuses the whole range]
+      #then[concurrency stays within the requested bounded budget]
+      #then[results remain in recording order]
+      #then[every payload is verified]
+      #then[any failed object refuses the whole range]
     ]
     #behavior(title: "Read workers remain scoped to their caller", level: "boundary", area: "Retrieval")[
       #given[a concurrent range read has outstanding adapter calls]
       #when[the read completes, fails or loses its caller]
-      #then[its read workers terminate without stopping borrowed resources; a deletion fence observed before return refuses the range]
+      #then[its read workers terminate without stopping borrowed resources]
+      #then[a deletion fence observed before return refuses the range]
     ]
     #points(
       [Range retrieval is ordered and bounded to 128 batches, and the last returned entry's absolute sequence is the next-page cursor. Serial reads run in the calling process.],
@@ -87,15 +112,111 @@
     #behavior(title: "Erasure fences delivery and archival", level: "boundary", area: "Retention")[
       #given[a caller-authorized session deletion]
       #when[the caller commits a fence and drives erasure]
-      #then[admission and reads refuse the session, active archival settles before the fence, objects are deleted before recording rows, and retained tombstones permit idempotent retry and late-object reconciliation]
+      #then[admission and reads refuse the session]
+      #then[active archival settles before the fence]
+      #then[objects are deleted before recording rows]
+      #then[retained #term("term-tombstone")s permit idempotent retry and late-object reconciliation]
     ]
     #points(
       [A #term("term-deletion-fence") atomically prevents new admission, archive work, search and reads, including for a session ID not yet admitted. It snapshots object keys under the transaction-scoped session lock that admission and archival also use. Every planned, current and retired key participates in fencing and repeated erasure.],
       [Erasure idempotently deletes the objects before clearing recording rows. Each pass handles at most eight keys and reports whether the session finished erasing. A further operation processes an unfinished fence or reconciles the oldest completed deletion after a supplied interval.],
-      [Object removal is supplied separately from the put and get functions of an object store. Tombstones and object keys are retained because a PUT with an uncertain remote outcome can finish after its worker died, and repeated deletion reconciles that object without making its session readable.],
+      [Object removal is supplied separately from the put and get functions of an object store. #term("term-tombstone")s and object keys are retained because a PUT with an uncertain remote outcome can finish after its worker died, and repeated deletion reconciles that object without making its session readable.],
       [The host owns authorization, deadlines, worker supervision, retry cadence and backup restoration. It reapplies tombstones after restoring a backup and separately qualifies versioned objects, provider snapshots and physical deletion deadlines. Completed erasure does not establish removal from provider versions or backups.],
       [Every ingestion and archive worker is upgraded before retention is enabled, because older workers ignore the fence. Deleted is an additional failure variant of admission and reads. #adr(15)],
     )
+  ])
+  #section(title: "Domain model", lead: "Archive owns the session record, the batch receipt, the archive generation and the tombstone.", body: [
+    #subsection(title: "Archive domain")[
+      #entity(
+        title: "Session record",
+        description: [The server's record of one session: its fixed metadata and the next sequence it admits.],
+        kind: "aggregate",
+        owner: "archive",
+        lifecycle: "stateful",
+        domain: "archive",
+        tint: "blue",
+      )[
+        #attribute(name: "Fixed metadata", type: "Session metadata", provenance: "authored")[the identifier, user reference, build, platform and replay contract that every later batch must agree with]
+        #attribute(name: "Admission cursor", type: "Sequence number", provenance: "derived")[the highest committed sequence, advanced with each admitted batch under the session lock]
+        #relates(cardinality: "1 : n")[retains many *Batch receipts*]
+        #relates(cardinality: "1 : n")[is archived in many *Archive generations*]
+      ]
+      #entity(
+        title: "Batch receipt",
+        description: [The durable record of an admitted batch that survives removal of its database payload.],
+        kind: "entity",
+        owner: "archive",
+        lifecycle: "append-only",
+        domain: "archive",
+        tint: "blue",
+      )[
+        #attribute(name: "Starting sequence", type: "Sequence number", provenance: "derived")[the sequence that identifies the batch within its session]
+        #attribute(name: "Range", type: "Contiguous sequence range", provenance: "derived")[the original range the batch covered]
+        #attribute(name: "Content digest", type: "Content digest", provenance: "derived")[the digest that permits an exact retry check after the payload is gone]
+        #relates(cardinality: "n : 1")[belongs to one *Session record*]
+        #relates(cardinality: "n : 0..1")[is held by at most one current *Archive generation*]
+      ]
+      #entity(
+        id: "archive-generation",
+        title: "Archive generation",
+        description: [One immutable archive object for a segment of whole batches.],
+        kind: "entity",
+        owner: "archive",
+        lifecycle: "stateful",
+        domain: "archive",
+        tint: "blue",
+      )[
+        #attribute(name: "Object key", type: "Object key", provenance: "derived")[the fixed key committed with the plan before any upload]
+        #attribute(name: "Content digest", type: "Content digest", provenance: "derived")[the digest of the planned bytes that verification reads back]
+        #attribute(name: "Planned payload", type: "Archive payload", provenance: "derived")[the complete payload kept in the database until verified publication]
+        #attribute(
+          id: "state",
+          name: "Generation state",
+          type: "Generation state",
+          provenance: "derived",
+          state-type: "generation-state",
+          state-machine: "generation-lifecycle",
+        )[planned, current or retired]
+        #relates(cardinality: "n : 1")[archives batches of one *Session record*]
+      ]
+      #entity(
+        title: "Tombstone",
+        description: [The retained record that a session was fenced for erasure.],
+        kind: "entity",
+        owner: "archive",
+        lifecycle: "append-only",
+        domain: "archive",
+        tint: "blue",
+      )[
+        #attribute(name: "Object key inventory", type: "Object keys", provenance: "derived")[every planned, current and retired key of the session]
+        #attribute(name: "Erasure completion", type: "Completed or pending", provenance: "derived")[whether erasure finished deleting the session's objects and rows]
+        #relates(cardinality: "1 : 0..1")[fences one *Session record* when the session was already admitted]
+      ]
+    ]
+    #subsection(title: "Archive generation lifecycle")[
+      #state-type(
+        id: "generation-state",
+        title: "Generation state",
+        variants: (
+          (id: "planned", description: [The key, digest and payload are committed and the object is not yet published.]),
+          (id: "current", description: [The object is the verified publication for its entry range.]),
+          (id: "retired", description: [A later generation replaced the object and its key awaits cleanup.]),
+        ),
+      )
+      #state-machine(
+        id: "generation-lifecycle",
+        subject: "archive-generation",
+        state-field: "state",
+        state-type: "generation-state",
+        states: ("planned", "current", "retired"),
+        transitions: (
+          ("planned", "current", "publication verified"),
+          ("current", "retired", "replaced by a later generation"),
+        ),
+        initial: "planned",
+        accepting: ("retired",),
+      )
+    ]
   ])
   #section(title: "Hosting and storage ownership", lead: "The server package borrows its resources, and the development collector is the example host.", body: [
     #points(
