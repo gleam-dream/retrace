@@ -64,8 +64,10 @@ answers from local state and makes no remote calls. It receives:
   covers a `Failed` attempt.
 
 A conservative policy therefore trusts only `Failed` attempts, and only after your qualified bound has elapsed
-since the failure. An `InFlight` attempt needs evidence that no worker can still send, such as a terminated
-worker or revoked write credentials. No clock substitutes for it. Retrace ships no S3 policy: its five-second
+since the failure. Resolving an `InFlight` attempt needs two facts: no local dispatch can still happen (the worker is stopped,
+or fenced out of sending), and no request it already issued can publish (a provider-qualified bound, or the
+provider's own evidence). Terminating the worker or revoking its credentials establishes at most the first. No
+clock alone supplies either. Retrace ships no S3 policy: its five-second
 timeout abandons the wait, not the request. `directory.quiesced` proves a `Failed` local put, whose write
 finishes inside the calling process, and leaves an `InFlight` one unproven.
 

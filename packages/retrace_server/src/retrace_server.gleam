@@ -46,7 +46,10 @@ pub type Error {
 pub type WriteState {
   /// Admitted, and no outcome recorded. The PUT may not have been sent yet, may
   /// be on the wire, or may have been lost with its caller. No clock bounds it:
-  /// a paused worker can still send arbitrarily long after admission.
+  /// a paused worker can still send arbitrarily long after admission. Proving it
+  /// quiescent needs two facts: no local dispatch can still happen, and no
+  /// request already issued can publish. Stopping the worker or revoking its
+  /// credentials establishes at most the first.
   InFlight
   /// `put` returned an error. The provider may still finish the request.
   Failed
