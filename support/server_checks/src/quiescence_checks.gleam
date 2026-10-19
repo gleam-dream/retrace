@@ -421,6 +421,13 @@ fn paused_after_admission(db: pog.Connection) -> Nil {
     server.WriteAttempt(state: server.InFlight, since_failure_seconds: None, ..),
   ] = attempts(db, session.id)
   assert objects(provider) == [] && puts(provider) == 0
+  // The worker has been paused for an hour since admission.
+  let assert Ok(_) =
+    pog.query(
+      "UPDATE retrace_write_attempts SET admitted_at=admitted_at-interval '3600 seconds' WHERE session_id=$1",
+    )
+    |> pog.parameter(pog.text(session.id))
+    |> pog.execute(db)
   let assert Ok(_) = server.fence(db, session.id)
   let recipe = fn(limit) {
     server.Eraser(remove(provider, _), fn(attempt) {
@@ -438,17 +445,21 @@ fn paused_after_admission(db: pog.Connection) -> Nil {
   let assert Ok(Error(server.Storage(server.Unavailable))) =
     process.receive(finished, 3000)
   assert puts(provider) == 1
+  // The two clocks differ: an hour since admission, moments since the failure.
   let assert [
     server.WriteAttempt(
       state: server.Failed,
-      since_failure_seconds: Some(_),
+      since_admission_seconds: admitted,
+      since_failure_seconds: Some(failed),
       ..,
     ),
   ] = attempts(db, session.id)
+  assert admitted >= 3600 && failed < 600
   assert publish_pending(provider) == 1
-  // Just after the failure a long qualified bound still proves nothing.
+  // A 900 second provider bound has not elapsed since the failure, though
+  // far more than 900 seconds have passed since admission.
   let assert Ok(server.AwaitingWriters(1)) =
-    server.erase(db, recipe(3600), session.id)
+    server.erase(db, recipe(900), session.id)
   assert list.length(objects(provider)) == 1
   erase_until_erased(db, recipe(0), session.id)
   assert objects(provider) == []
