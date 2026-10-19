@@ -30,6 +30,9 @@ pub type ObjectStore {
 pub type Error {
   InvalidBatch(wire.Error)
   Database(pog.QueryError)
+  /// The database holds a schema from before write attempts. `migrate` refuses
+  /// it unchanged: start from an empty database.
+  UnsupportedSchema(String)
   Conflict
   OutOfOrder(expected: Int, received: Int)
   NotFound
@@ -41,7 +44,9 @@ pub type Error {
 /// Where a recorded upload stands. Only `InFlight` and `Failed` can still
 /// publish; neither is proof that it will not.
 pub type WriteState {
-  /// Dispatched and no outcome recorded: alive, or dead with the call lost.
+  /// Admitted, and no outcome recorded. The PUT may not have been sent yet, may
+  /// be on the wire, or may have been lost with its caller. No clock bounds it:
+  /// a paused worker can still send arbitrarily long after admission.
   InFlight
   /// `put` returned an error. The provider may still finish the request.
   Failed
@@ -60,8 +65,14 @@ pub type WriteAttempt {
     state: WriteState,
     /// The host's stated reason once the attempt is `Quiesced`.
     basis: Option(String),
-    /// Seconds since dispatch, read from the database clock.
-    age_seconds: Int,
+    /// Whole seconds since admission, rounded down, from the database clock.
+    /// Admission precedes the PUT by an unbounded pause, so this is not a bound
+    /// on any remote write.
+    since_admission_seconds: Int,
+    /// Whole seconds, rounded down, since `put` returned its error. The request
+    /// was sent before that return, so a provider-qualified maximum request
+    /// lifetime elapsed since then covers it. `None` until a failure is recorded.
+    since_failure_seconds: Option(Int),
   )
 }
 
@@ -121,15 +132,36 @@ type Chunk {
   )
 }
 
+/// Create the schema. A database that already holds tombstones from before write
+/// attempts is refused with `UnsupportedSchema` before any statement runs.
 pub fn migrate(db: pog.Connection) -> Result(Nil, Error) {
+  use legacy <- result.try(
+    pog.query(
+      "SELECT to_regclass('retrace_tombstones') IS NOT NULL AND NOT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid=to_regclass('retrace_tombstones') AND attname='checked_at' AND NOT attisdropped)",
+    )
+    |> pog.returning(decode.field(0, decode.bool, decode.success))
+    |> pog.execute(db)
+    |> result.map_error(Database),
+  )
+  case legacy.rows {
+    [True] ->
+      Error(UnsupportedSchema(
+        "retrace_tombstones predates write attempts and has no upgrade path; migrate an empty database",
+      ))
+    _ -> create_schema(db)
+  }
+}
+
+fn create_schema(db: pog.Connection) -> Result(Nil, Error) {
   [
     "CREATE TABLE IF NOT EXISTS retrace_tombstones (session_id text PRIMARY KEY, fenced_at timestamptz NOT NULL DEFAULT now(), reconciled_at timestamptz, checked_at timestamptz)",
     "CREATE TABLE IF NOT EXISTS retrace_deletion_objects (session_id text NOT NULL REFERENCES retrace_tombstones(session_id), object_key text NOT NULL, deleted_at timestamptz, PRIMARY KEY(session_id,object_key))",
     "CREATE TABLE IF NOT EXISTS retrace_write_attempts (
       attempt_id bigserial PRIMARY KEY, session_id text NOT NULL, object_key text NOT NULL,
       state text NOT NULL DEFAULT 'in_flight' CHECK(state IN ('in_flight','failed','completed','quiesced')),
-      basis text, admitted_at timestamptz NOT NULL DEFAULT clock_timestamp(), resolved_at timestamptz,
-      CHECK((state IN ('in_flight','failed'))=(resolved_at IS NULL)))",
+      basis text, admitted_at timestamptz NOT NULL DEFAULT clock_timestamp(), failed_at timestamptz,
+      resolved_at timestamptz,
+      CHECK((state IN ('in_flight','failed'))=(resolved_at IS NULL)), CHECK(state<>'failed' OR failed_at IS NOT NULL))",
     "CREATE INDEX IF NOT EXISTS retrace_write_attempts_session ON retrace_write_attempts(session_id, state)",
     "CREATE TABLE IF NOT EXISTS retrace_sessions (
       id text PRIMARY KEY, user_ref text NOT NULL, metadata text NOT NULL,
@@ -443,7 +475,7 @@ fn settle_write(
   basis: Option(String),
 ) -> Result(Nil, Error) {
   pog.query(
-    "UPDATE retrace_write_attempts SET state=$2,basis=$3,resolved_at=CASE WHEN $2 IN ('completed','quiesced') THEN clock_timestamp() END WHERE attempt_id=$1 AND state IN ('in_flight','failed')",
+    "UPDATE retrace_write_attempts SET state=$2,basis=$3,resolved_at=CASE WHEN $2 IN ('completed','quiesced') THEN clock_timestamp() END,failed_at=CASE WHEN $2='failed' THEN clock_timestamp() ELSE failed_at END WHERE attempt_id=$1 AND state IN ('in_flight','failed')",
   )
   |> pog.parameter(pog.int(attempt))
   |> pog.parameter(pog.text(state))
@@ -459,18 +491,19 @@ fn attempt_decoder() -> decode.Decoder(WriteAttempt) {
   use key <- decode.field(2, decode.string)
   use state <- decode.field(3, decode.string)
   use basis <- decode.field(4, decode.optional(decode.string))
-  use age <- decode.field(5, decode.int)
+  use admitted <- decode.field(5, decode.int)
+  use failed <- decode.field(6, decode.optional(decode.int))
   let state = case state {
     "failed" -> Failed
     "completed" -> Completed
     "quiesced" -> Quiesced
     _ -> InFlight
   }
-  decode.success(WriteAttempt(id, session, key, state, basis, age))
+  decode.success(WriteAttempt(id, session, key, state, basis, admitted, failed))
 }
 
 const attempt_select =
-  "SELECT attempt_id,session_id,object_key,state,basis,extract(epoch FROM clock_timestamp()-admitted_at)::bigint FROM retrace_write_attempts"
+  "SELECT attempt_id,session_id,object_key,state,basis,floor(extract(epoch FROM clock_timestamp()-admitted_at))::bigint,floor(extract(epoch FROM clock_timestamp()-failed_at))::bigint FROM retrace_write_attempts"
 
 /// List up to `limit` write attempts of a session, oldest first, with their
 /// states and the basis the host gave for each quiescent one.

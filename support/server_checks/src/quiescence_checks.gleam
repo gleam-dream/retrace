@@ -3,11 +3,13 @@
 //// failure, so every schedule below is explicit and none depends on timing.
 //// The host decides quiescence through the `quiesced` function it supplies.
 
+import envoy
 import gleam/dynamic/decode
 import gleam/erlang/process
 import gleam/io
 import gleam/list
 import gleam/option.{None, Some}
+import gleam/string
 import pog
 import retrace
 import retrace/wire
@@ -82,9 +84,13 @@ pub fn run(db: pog.Connection) -> Nil {
   failed_deletion_is_retryable(db)
   idempotent_fence_and_erasure(db)
   rolled_back_fence(db)
-  host_decides_from_attempt_state_and_age(db)
+  paused_after_admission(db)
+  host_decides_from_failure_age(db)
+  elapsed_time_is_floored(db)
+  legacy_schema_is_refused(db)
+  restricted_runtime_role(db)
   io.println(
-    "PASS uncertain PUT keeps erasure incomplete until the host proves quiescence, dead and paused workers, multiple attempts and keys, failed deletion, idempotence, caller rollback, host policy over attempt state and age",
+    "PASS uncertain PUT keeps erasure incomplete until the host proves quiescence, dead and paused workers, multiple attempts and keys, failed deletion, idempotence, caller rollback, a worker paused after admission, host policy over time since failure, floored elapsed time, refusal of a legacy schema and a restricted runtime role",
   )
 }
 
@@ -386,9 +392,72 @@ fn rolled_back_fence(db: pog.Connection) -> Nil {
   Nil
 }
 
-// Quiescence is the host's policy over typed facts: whether the PUT returned,
-// and how long ago it was dispatched. Retrace infers nothing from either.
-fn host_decides_from_attempt_state_and_age(db: pog.Connection) -> Nil {
+// A worker can pause after its attempt is admitted and before it sends the
+// PUT, so no time since admission bounds a remote write. The conservative
+// recipe only trusts time since a failure that was actually returned.
+fn paused_after_admission(db: pog.Connection) -> Nil {
+  let provider = provider()
+  let #(session, _) = admitted(db, "paused-after-admission")
+  let entered = process.new_subject()
+  let finished = process.new_subject()
+  let paused =
+    server.ObjectStore(
+      fn(key, bytes) {
+        let release = process.new_subject()
+        process.send(entered, release)
+        let assert Ok(Nil) = process.receive(release, 3000)
+        pend(provider, key, bytes)
+        Error(server.Unavailable)
+      },
+      get(provider, _),
+    )
+  let _ =
+    process.spawn(fn() {
+      process.send(finished, server.archive_segment_next(db, paused, 0))
+    })
+  // The attempt is admitted and the PUT is not sent yet.
+  let assert Ok(release) = process.receive(entered, 3000)
+  let assert [
+    server.WriteAttempt(state: server.InFlight, since_failure_seconds: None, ..),
+  ] = attempts(db, session.id)
+  assert objects(provider) == [] && puts(provider) == 0
+  let assert Ok(_) = server.fence(db, session.id)
+  let recipe = fn(limit) {
+    server.Eraser(remove(provider, _), fn(attempt) {
+      case attempt.state, attempt.since_failure_seconds {
+        server.Failed, Some(elapsed) if elapsed >= limit ->
+          server.Quiescent("the failure returned long enough ago")
+        _, _ -> server.MayPublish
+      }
+    })
+  }
+  let assert Ok(server.AwaitingWriters(1)) =
+    server.erase(db, recipe(0), session.id)
+  // The worker resumes after the fence and sends the PUT it had admitted.
+  process.send(release, Nil)
+  let assert Ok(Error(server.Storage(server.Unavailable))) =
+    process.receive(finished, 3000)
+  assert puts(provider) == 1
+  let assert [
+    server.WriteAttempt(
+      state: server.Failed,
+      since_failure_seconds: Some(_),
+      ..,
+    ),
+  ] = attempts(db, session.id)
+  assert publish_pending(provider) == 1
+  // Just after the failure a long qualified bound still proves nothing.
+  let assert Ok(server.AwaitingWriters(1)) =
+    server.erase(db, recipe(3600), session.id)
+  assert list.length(objects(provider)) == 1
+  erase_until_erased(db, recipe(0), session.id)
+  assert objects(provider) == []
+  Nil
+}
+
+// Quiescence is the host's policy over typed facts: whether the PUT returned
+// an error, and how long ago. Retrace infers nothing from either.
+fn host_decides_from_failure_age(db: pog.Connection) -> Nil {
   // The directory adapter finishes writes inside the calling process, so a
   // returned failure is quiescent and a call that never returned is not.
   let at = fn(state) {
@@ -398,26 +467,120 @@ fn host_decides_from_attempt_state_and_age(db: pog.Connection) -> Nil {
       object_key: "k",
       state: state,
       basis: None,
-      age_seconds: 0,
+      since_admission_seconds: 0,
+      since_failure_seconds: None,
     )
   }
   let assert server.Quiescent(_) = directory.quiesced(at(server.Failed))
   let assert server.MayPublish = directory.quiesced(at(server.InFlight))
 
   let provider = provider()
-  let #(session, _) = admitted(db, "host-age-policy")
+  let #(session, _) = admitted(db, "host-failure-age-policy")
   let assert Error(_) = server.archive_segment_next(db, uncertain(provider), 0)
   let assert Ok(_) = server.fence(db, session.id)
-  let older_than = fn(limit) {
+  let failed_for = fn(limit) {
     server.Eraser(remove(provider, _), fn(attempt) {
-      case attempt.age_seconds >= limit {
-        True -> server.Quiescent("credentials expired")
-        False -> server.MayPublish
+      case attempt.since_failure_seconds {
+        Some(elapsed) if elapsed >= limit ->
+          server.Quiescent("the provider bound has elapsed")
+        _ -> server.MayPublish
       }
     })
   }
   let assert Ok(server.AwaitingWriters(1)) =
-    server.erase(db, older_than(3600), session.id)
-  let assert Ok(server.Erased) = server.erase(db, older_than(0), session.id)
+    server.erase(db, failed_for(3600), session.id)
+  let assert Ok(server.Erased) = server.erase(db, failed_for(0), session.id)
+  Nil
+}
+
+// Elapsed time never rounds up: 899.6 seconds is 899, so a 900 second bound
+// has not yet passed.
+fn elapsed_time_is_floored(db: pog.Connection) -> Nil {
+  let provider = provider()
+  let #(session, _) = admitted(db, "floored-time")
+  let assert Error(_) = server.archive_segment_next(db, uncertain(provider), 0)
+  let assert Ok(_) =
+    pog.query(
+      "UPDATE retrace_write_attempts SET admitted_at=clock_timestamp()-interval '899.6 seconds', failed_at=clock_timestamp()-interval '899.6 seconds' WHERE session_id=$1",
+    )
+    |> pog.parameter(pog.text(session.id))
+    |> pog.execute(db)
+  let assert [
+    server.WriteAttempt(
+      since_admission_seconds: 899,
+      since_failure_seconds: Some(899),
+      ..,
+    ),
+  ] = attempts(db, session.id)
+  // Leave no pending plan for the global archive worker of later checks.
+  let assert Ok(_) = server.fence(db, session.id)
+  erase_until_erased(db, proven(provider), session.id)
+  Nil
+}
+
+// A schema from before write attempts cannot be adopted in place: migrate must
+// refuse it before changing anything.
+fn legacy_schema_is_refused(db: pog.Connection) -> Nil {
+  let exists = fn(tx, name) {
+    let assert Ok(returned) =
+      pog.query("SELECT to_regclass($1) IS NOT NULL")
+      |> pog.parameter(pog.text(name))
+      |> pog.returning(decode.field(0, decode.bool, decode.success))
+      |> pog.execute(tx)
+    returned.rows == [True]
+  }
+  let assert Error(pog.TransactionRolledBack(Nil)) =
+    pog.transaction(db, fn(tx) {
+      let exec = fn(sql) {
+        let assert Ok(_) = pog.query(sql) |> pog.execute(tx)
+        Nil
+      }
+      exec("CREATE SCHEMA legacy_check")
+      exec("SET LOCAL search_path TO legacy_check")
+      exec(
+        "CREATE TABLE retrace_tombstones (session_id text PRIMARY KEY, fenced_at timestamptz NOT NULL DEFAULT now(), reconciled_at timestamptz)",
+      )
+      let assert Error(server.UnsupportedSchema(_)) = server.migrate(tx)
+      assert !exists(tx, "retrace_write_attempts")
+      assert !exists(tx, "retrace_sessions")
+      Error(Nil)
+    })
+  Nil
+}
+
+// The documented runtime privileges are enough, and the attempt sequence is
+// one of them.
+fn restricted_runtime_role(db: pog.Connection) -> Nil {
+  let exec = fn(sql) {
+    let assert Ok(_) = pog.query(sql) |> pog.execute(db)
+    Nil
+  }
+  exec(
+    "DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='retrace_runtime') THEN CREATE ROLE retrace_runtime LOGIN; END IF; END $$",
+  )
+  exec(
+    "GRANT SELECT,INSERT,UPDATE,DELETE ON retrace_tombstones,retrace_deletion_objects,retrace_sessions,retrace_chunks,retrace_archive_objects,retrace_archive_deferrals,retrace_write_attempts TO retrace_runtime",
+  )
+  let assert Ok(url) = envoy.get("DATABASE_URL")
+  let assert Ok(config) =
+    pog.url_config(
+      process.new_name("restricted"),
+      string.replace(url, "retrace@", "retrace_runtime@"),
+    )
+  let assert Ok(started) = pog.start(config)
+  let runtime = started.data
+  let provider = provider()
+  let #(session, _) = admitted(db, "restricted-runtime")
+  // Without sequence USAGE the attempt cannot be admitted.
+  let assert Error(server.Database(_)) =
+    server.archive_segment_next(runtime, accepting(provider), 0)
+  exec(
+    "GRANT USAGE ON SEQUENCE retrace_write_attempts_attempt_id_seq TO retrace_runtime",
+  )
+  let assert Ok(True) =
+    server.archive_segment_next(runtime, accepting(provider), 0)
+  let assert Ok(_) = server.fence(runtime, session.id)
+  erase_until_erased(runtime, proven(provider), session.id)
+  assert objects(provider) == []
   Nil
 }

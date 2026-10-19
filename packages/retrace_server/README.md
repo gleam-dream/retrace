@@ -29,7 +29,7 @@ operations explicitly:
 | `archive_next`                     | Legacy compatibility: archive one original batch per object                                                                              |
 | `archive_segment_next`             | Compact one idle session segment into a verified immutable generation                                                                    |
 | `reclaim_next`                     | Delete at most eight unreferenced retired generations                                                                                    |
-| `fence`, `erase_session`           | Refuse a session, then delete its objects and recording rows on caller authority; the result is `Erasing`, `AwaitingWriters` or `Erased` |
+| `fence`, `erase`                   | Refuse a session, then delete its objects and recording rows on caller authority; the result is `Erasing`, `AwaitingWriters` or `Erased` |
 | `erasure_status`, `write_attempts` | Read erasure progress, and list a session's upload attempts with their states                                                            |
 
 `retrace_server/s3` adapts S3-compatible storage with `bucket.Credentials`, and
@@ -43,24 +43,46 @@ shows executable storage behavior. The contracts are in the
 ## Erasure and uploads with an unknown outcome
 
 A failed or lost PUT does not prove that the provider stopped. Each upload is recorded as a write
-attempt before it is dispatched, with a state that is only a fact: `InFlight` (no outcome seen),
-`Failed` (`put` returned an error), `Completed` (`put` returned success) or `Quiesced`.
+attempt, committed under the session lock before the PUT is dispatched. Its state is only a fact:
 
-The host decides which attempts can no longer publish. `erase_session` takes an `Eraser(remove, quiesced)`,
-and on every pass calls `quiesced` for each attempt that might still publish. It answers `MayPublish`,
-or `Quiescent(basis)` with the reason, which Retrace records. The function receives the attempt's
-state, object key and age, so a qualified host policy such as "no request outlives fifteen minutes" resolves
-attempts as time passes with no separate job. It runs inside the session lock, so it answers from local state.
+- `InFlight`: admitted, with no outcome recorded. The PUT may not have been sent yet, may be on the wire,
+  or may have been lost with its caller;
+- `Failed`: `put` returned an error. Retrace records when;
+- `Completed`: `put` returned success, so the provider finished the write;
+- `Quiesced`: the host proved that it cannot publish later.
 
-- `directory.quiesced` proves a `Failed` local put and leaves an `InFlight` one unproven.
-- No S3 function is supplied. A timeout abandons the wait, not the request, so supply a policy you
-  have qualified with your provider.
+The host decides which attempts can no longer publish. `erase` takes an `Eraser(remove, quiesced)`, and on every
+pass calls `quiesced` for each attempt that might still publish. It answers `MayPublish`, or
+`Quiescent(basis)` with the reason, which Retrace records. The function runs inside the session lock, so it
+answers from local state and makes no remote calls. It receives:
+
+- `state` and `object_key`;
+- `since_admission_seconds`, rounded down. A worker can pause after admission and send its PUT arbitrarily
+  later, so this bounds no remote write;
+- `since_failure_seconds`, rounded down, once `put` returned an error. The request was sent before that
+  return, so a maximum request lifetime that your provider has qualified, elapsed since the failure,
+  covers a `Failed` attempt.
+
+A conservative policy therefore trusts only `Failed` attempts, and only after your qualified bound has elapsed
+since the failure. An `InFlight` attempt needs evidence that no worker can still send, such as a terminated
+worker or revoked write credentials. No clock substitutes for it. Retrace ships no S3 policy: its five-second
+timeout abandons the wait, not the request. `directory.quiesced` proves a `Failed` local put, whose write
+finishes inside the calling process, and leaves an `InFlight` one unproven.
 
 `erase` and `erase_next` return the typed `Erasure`, and `reconciled_at` is set only on `Erased`;
-`erasure_status` reads it later. A host that proves nothing leaves the
-session `AwaitingWriters`, which is honest and safe.
+`erasure_status` reads it later. A host that proves nothing leaves the session `AwaitingWriters`, which is
+honest and safe.
 
-Run `migrate` on an empty database: this schema has no upgrade path from earlier drafts. Every worker must run this
-version before retention is enabled, because an older worker records no attempts.
-The [quiescence checks](../../support/server_checks/src/quiescence_checks.gleam) are the executable specification;
+## Schema and database privileges
+
+`migrate` creates the schema. It has no upgrade path from earlier drafts, and it refuses a database that holds
+tombstones from before write attempts with `UnsupportedSchema`, changing nothing. Start from an empty database,
+and run every worker on this version before enabling retention, because an older worker records no attempts.
+
+A restricted runtime role needs, on `retrace_tombstones`, `retrace_deletion_objects`, `retrace_sessions`,
+`retrace_chunks`, `retrace_archive_objects`, `retrace_archive_deferrals` and `retrace_write_attempts`:
+`SELECT`, `INSERT`, `UPDATE` and `DELETE`. It also needs `USAGE` on the sequence
+`retrace_write_attempts_attempt_id_seq`, or admitting an attempt fails with `permission denied for sequence`.
+The [quiescence checks](../../support/server_checks/src/quiescence_checks.gleam) exercise archival and erasure
+under exactly these privileges and are the executable specification;
 [ADR 0019](../../docs/adr/0019-complete-erasure-only-after-uploads-quiesce.md) records the decision.

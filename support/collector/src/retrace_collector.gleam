@@ -102,6 +102,7 @@ fn failed(error: retrace_server.Error) -> Response(mist.ResponseData) {
     retrace_server.NotFound | retrace_server.Deleted -> 404
     retrace_server.Database(_)
     | retrace_server.Storage(_)
+    | retrace_server.UnsupportedSchema(_)
     | retrace_server.CorruptArchive -> 503
   }
   // Do not expose database diagnostics or storage credentials over HTTP.
