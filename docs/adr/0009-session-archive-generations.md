@@ -49,3 +49,5 @@ batch equality, exact retry, late replacement, durable upload failure/restart,
 readback integrity, concurrent archive workers, admission during remote reads,
 fencing, stale source rejection, legacy compaction and oversized inline fallback.
 Consumer tests with a caller-owned signed S3 adapter remain separate evidence.
+
+Superseded in part by [ADR 0019](0019-complete-erasure-only-after-uploads-quiesce.md): publication admits a durable write attempt under the lock but uploads and verifies outside it, and erasure waits for uncertain attempts.

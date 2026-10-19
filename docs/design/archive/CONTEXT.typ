@@ -11,5 +11,7 @@
 
     _Avoid_: durable cursor — does not say whose position it is; recording cursor — names the recorder's position in #ctx("recording"), not the server's committed position.]),
   (slug: "term-tombstone", title: [Tombstone], body: [The retained record that a session was fenced for erasure, held with the session's object keys so that repeated erasure can delete late-written objects without making the session readable.]),
+  (slug: "term-write-attempt", title: [Write attempt], body: [The durable record, committed under the session lock before an upload is dispatched, of one PUT of an immutable object key. Its state is in flight, failed, completed or quiesced, and only an in-flight or failed attempt might still publish.]),
+  (slug: "term-quiescence", title: [Quiescence], body: [The established condition that an upload can no longer publish. A returned PUT success, or a host decision with a stated basis, establishes it; a timeout, expired lease, dead worker, absent object, successful DELETE or cancellation flag does not.]),
   (slug: "term-collector", title: [Collector], body: [A host that serves batch submission, session listing and batch paging to the packaged client and viewer. The development collector owns a database pool and an archive worker and serves the examples.]),
 )

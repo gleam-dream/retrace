@@ -11,11 +11,12 @@
     #invariant(title: "Admission is ordered per session", enforcement: "mechanism")[A batch is admitted only when its checkpoint matches the session's #term("term-admission-cursor") and its fixed session metadata agrees with the stored metadata.]
     #invariant(title: "Original batch identity survives archival", enforcement: "mechanism")[A #term("term-batch-receipt") retains the original range and digest after the database payload is removed, so an exact retry returns the original acknowledgement.]
     #invariant(title: "A fenced session never becomes readable again", enforcement: "mechanism")[Admission, archival, search and reads refuse a fenced session, including a late object write that finishes after its worker died.]
+    #invariant(title: "Erasure never completes while an admitted upload might publish", enforcement: "mechanism")[An #term("term-write-attempt") is committed under the session lock before its PUT is dispatched. Erasure reports completion, clears recording rows and marks the tombstone reconciled only when every attempt is completed or proven quiescent and every inventoried key is deleted. A timeout, expired lease, dead worker, absent object, successful DELETE or local cancellation never proves quiescence.]
     #principle(title: "The host owns operations and policy", lens: "composition")[The host owns the database pool, object-store configuration, worker lifetimes, retention deadlines, authorization and backup restoration. The package starts no hidden worker.]
   ])
   #pending-ledger(
     pending-entry(title: "Publication, fence and recovery statements carried over from retired guides", kind: "verify", since: "2026-10-17")[
-      The rules for the publication lock, the fence snapshot, plan recovery and late-object reconciliation come from retired guides. This review confirmed the numeric limits (1000 entries, 32 MiB, sixteen concurrent reads, eight keys per pass) and the generation states, and not the locking and recovery behavior.
+      The rules for the publication lock, the fence snapshot, plan recovery and late-object reconciliation come from retired guides. This review confirmed the numeric limits (1000 entries, 32 MiB, sixteen concurrent reads, eight keys per pass) and the generation states. Server checks now exercise attempt admission, fencing and resolution against a controlled provider (ADR 0019); plan recovery after a crash and the behavior of a real provider remain unverified.
     ],
   )
   #section(title: "Admission", lead: "The server serializes admission per session and distinguishes duplicates from conflicts.", body: [
@@ -73,7 +74,7 @@
       [An #term("term-archive-generation") moves from planned to current to retired and never becomes current again. An #term("term-archive-plan") commits its key, digest and complete payload before any remote PUT. Publication verifies a GET against the exact planned bytes before clearing database payloads and changing pointers.],
       [A decoded segment is limited to 32 MiB, and decompression stops at that limit. A larger group keeps its existing sources and receives a durable deferral until the session advances, because byte size never creates an early segment. At most one planned payload per session temporarily duplicates up to 32 MiB in the database, which hosts count in capacity policy.],
       [Preparation snapshots sources under a short session lock, reads objects without that lock, and rechecks the original source pointers and complete segment coverage before committing a plan. Per-batch reads use windows of at most sixteen one-MiB objects under a running byte budget. Admission beyond the snapshot range stays safe.],
-      [Publication holds the session lock while it uploads, verifies and replaces pointers, so adapters bound their external I/O. A crash or uncertain PUT leaves a durable plan for retry and an inventoried key for erasure. The archive operation reports true for publication or durable deferral and false for no work or a snapshot invalidated by a competing worker.],
+      [Publication admits a #term("term-write-attempt") under the session lock, commits it, then uploads and verifies outside the lock and replaces pointers only after a locked recheck of the fence and the plan. A crash or uncertain PUT leaves a durable plan for retry, an inventoried key and an attempt that blocks erasure completion until the host proves it quiescent. Adapters still bound their external I/O. The archive operation reports true for publication or durable deferral and false for no work or a snapshot invalidated by a competing worker.],
       [The segment object is gzip-compressed newline-delimited JSON, a versioned session and range header followed by the unchanged encoded batches. Retired keys are eligible for immediate cleanup in passes of at most eight. The reclaim operation rechecks that neither batches nor an active plan reference a key, and later deletion reconciliation follows the host interval.],
       [Old per-batch objects stay readable and become eligible for idle compaction. A host that must avoid temporary per-batch objects does not run the per-batch archive worker. #adr(9)],
     )
@@ -113,16 +114,25 @@
       #given[a caller-authorized session deletion]
       #when[the caller commits a fence and drives erasure]
       #then[admission and reads refuse the session]
-      #then[active archival settles before the fence]
+      #then[a fence waits only for upload admission, never for a remote call]
+      #then[a fenced session admits no new attempt, so a retained worker neither starts nor retries an upload]
       #then[objects are deleted before recording rows]
       #then[retained #term("term-tombstone")s permit idempotent retry and late-object reconciliation]
     ]
+    #behavior(title: "Erasure waits for uploads whose outcome is unknown", level: "boundary", area: "Retention")[
+      #given[a fenced session with an admitted upload whose PUT failed or was lost without proof of its outcome]
+      #when[the caller drives erasure]
+      #then[the result reports the count of uploads that might publish and not completion]
+      #then[keys of those uploads are not deleted or counted as done, and the tombstone is not marked reconciled]
+      #then[completion follows only after the host proves every such upload quiescent and every inventoried key is deleted]
+    ]
     #points(
-      [A #term("term-deletion-fence") atomically prevents new admission, archive work, search and reads, including for a session ID not yet admitted. It snapshots object keys under the transaction-scoped session lock that admission and archival also use. Every planned, current and retired key participates in fencing and repeated erasure.],
-      [Erasure idempotently deletes the objects before clearing recording rows. Each pass handles at most eight keys and reports whether the session finished erasing. A further operation processes an unfinished fence or reconciles the oldest completed deletion after a supplied interval.],
+      [A #term("term-deletion-fence") atomically prevents new admission, archive work, search and reads, including for a session ID not yet admitted. It snapshots object keys under the transaction-scoped session lock that admission and upload admission also use. Every planned, current and retired key and every attempt key participates in fencing and repeated erasure.],
+      [Erasure idempotently deletes the objects before clearing recording rows. Each pass handles at most eight keys and reports erasing, awaiting writers with the unresolved count, or erased. A further operation advances the least recently checked unfinished fence or reconciles a completed deletion after a supplied interval, and reports that session and its erasure state.],
+      [A #term("term-write-attempt") is completed when PUT returns success. Otherwise it stays in flight or failed until the host proves it quiescent: erasure takes a host function that Retrace calls on every pass for each such attempt with its state, object key and age, and Retrace records the basis of each positive answer. #term("term-quiescence") is therefore never inferred from time.],
       [Object removal is supplied separately from the put and get functions of an object store. #term("term-tombstone")s and object keys are retained because a PUT with an uncertain remote outcome can finish after its worker died, and repeated deletion reconciles that object without making its session readable.],
       [The host owns authorization, deadlines, worker supervision, retry cadence and backup restoration. It reapplies tombstones after restoring a backup and separately qualifies versioned objects, provider snapshots and physical deletion deadlines. Completed erasure does not establish removal from provider versions or backups.],
-      [Every ingestion and archive worker is upgraded before retention is enabled, because older workers ignore the fence. Deleted is an additional failure variant of admission and reads. #adr(15)],
+      [Every ingestion and archive worker is upgraded before retention is enabled, because older workers ignore the fence and do not record attempts. Deleted is an additional failure variant of admission and reads. #adr(15) #adr(19)],
     )
   ])
   #section(title: "Domain model", lead: "Archive owns the session record, the batch receipt, the archive generation and the tombstone.", body: [
@@ -189,7 +199,8 @@
         tint: "blue",
       )[
         #attribute(name: "Object key inventory", type: "Object keys", provenance: "derived")[every planned, current and retired key of the session]
-        #attribute(name: "Erasure completion", type: "Completed or pending", provenance: "derived")[whether erasure finished deleting the session's objects and rows]
+        #attribute(name: "Erasure completion", type: "Erased, erasing or awaiting writers", provenance: "derived")[whether every write attempt is resolved and erasure finished deleting the session's objects and rows]
+        #attribute(name: "Write attempts", type: "Write attempts", provenance: "derived")[each admitted upload with its immutable key and its in-flight, failed, completed or quiesced state]
         #relates(cardinality: "1 : 0..1")[fences one *Session record* when the session was already admitted]
       ]
     ]

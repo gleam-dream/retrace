@@ -25,3 +25,5 @@ reapplies tombstones after restoring a backup and separately qualifies provider
 versions, snapshots and physical deletion deadlines, because completed erasure
 does not establish removal from them. Every worker is upgraded before retention
 is enabled, since older workers ignore the fence.
+
+Superseded in part by [ADR 0019](0019-complete-erasure-only-after-uploads-quiesce.md): archival no longer settles before the fence, and erasure completes only after every admitted upload is quiescent.
