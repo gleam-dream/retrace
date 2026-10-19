@@ -38,6 +38,62 @@ pub type Error {
   Deleted
 }
 
+/// Where a recorded upload stands. Only `InFlight` and `Failed` can still
+/// publish; neither is proof that it will not.
+pub type WriteState {
+  /// Dispatched and no outcome recorded: alive, or dead with the call lost.
+  InFlight
+  /// `put` returned an error. The provider may still finish the request.
+  Failed
+  /// `put` returned success, so the provider finished the write.
+  Completed
+  /// The host's `quiesced` function proved that it cannot publish later.
+  Quiesced
+}
+
+/// One admitted upload dispatch, retained with its session and immutable key.
+pub type WriteAttempt {
+  WriteAttempt(
+    id: Int,
+    session_id: String,
+    object_key: String,
+    state: WriteState,
+    /// The host's stated reason once the attempt is `Quiesced`.
+    basis: Option(String),
+    /// Seconds since dispatch, read from the database clock.
+    age_seconds: Int,
+  )
+}
+
+/// The host's answer to whether an upload can still publish. Retrace never
+/// infers it from errors, time or process liveness.
+pub type Quiescence {
+  MayPublish
+  Quiescent(basis: String)
+}
+
+/// What erasure needs from the host: object removal, and the host's own
+/// decision on each attempt that might still publish. `quiesced` runs inside
+/// the session lock on every pass, so it answers from local state.
+pub type Eraser {
+  Eraser(
+    remove: fn(String) -> Result(Nil, StorageError),
+    quiesced: fn(WriteAttempt) -> Quiescence,
+  )
+}
+
+/// Progress of erasing a fenced session. Only `Erased` is definitive.
+pub type Erasure {
+  /// No upload can publish later; further passes delete the remaining keys.
+  Erasing
+  /// This many admitted uploads might still publish. Deletion of their keys
+  /// waits, and the session stays incompletely erased.
+  AwaitingWriters(unresolved: Int)
+  /// Every upload is resolved, every inventoried key is deleted and the
+  /// recording rows are cleared.
+  Erased
+}
+
 pub type Summary {
   Summary(
     session: Session,
@@ -67,8 +123,14 @@ type Chunk {
 
 pub fn migrate(db: pog.Connection) -> Result(Nil, Error) {
   [
-    "CREATE TABLE IF NOT EXISTS retrace_tombstones (session_id text PRIMARY KEY, fenced_at timestamptz NOT NULL DEFAULT now(), reconciled_at timestamptz)",
+    "CREATE TABLE IF NOT EXISTS retrace_tombstones (session_id text PRIMARY KEY, fenced_at timestamptz NOT NULL DEFAULT now(), reconciled_at timestamptz, checked_at timestamptz)",
     "CREATE TABLE IF NOT EXISTS retrace_deletion_objects (session_id text NOT NULL REFERENCES retrace_tombstones(session_id), object_key text NOT NULL, deleted_at timestamptz, PRIMARY KEY(session_id,object_key))",
+    "CREATE TABLE IF NOT EXISTS retrace_write_attempts (
+      attempt_id bigserial PRIMARY KEY, session_id text NOT NULL, object_key text NOT NULL,
+      state text NOT NULL DEFAULT 'in_flight' CHECK(state IN ('in_flight','failed','completed','quiesced')),
+      basis text, admitted_at timestamptz NOT NULL DEFAULT clock_timestamp(), resolved_at timestamptz,
+      CHECK((state IN ('in_flight','failed'))=(resolved_at IS NULL)))",
+    "CREATE INDEX IF NOT EXISTS retrace_write_attempts_session ON retrace_write_attempts(session_id, state)",
     "CREATE TABLE IF NOT EXISTS retrace_sessions (
       id text PRIMARY KEY, user_ref text NOT NULL, metadata text NOT NULL,
       sequence bigint NOT NULL DEFAULT 0, elapsed_ms bigint NOT NULL DEFAULT 0,
@@ -246,8 +308,11 @@ fn chunk_decoder() -> decode.Decoder(Chunk) {
   ))
 }
 
-/// Archive at most one pending batch. Concurrent workers may upload the same
-/// immutable bytes to the same key; the conditional database update is safe.
+/// Archive at most one pending batch. The upload is admitted durably before
+/// dispatch and outside the lock, so a failed or lost put leaves an attempt that
+/// keeps erasure incomplete until the host proves it quiescent.
+/// Concurrent workers may upload the same immutable bytes to the same key; the
+/// conditional database update is safe.
 pub fn archive_next(
   db: pog.Connection,
   store: ObjectStore,
@@ -262,47 +327,167 @@ pub fn archive_next(
   )
   case chunks.rows {
     [] -> Ok(False)
-    [candidate, ..] ->
-      transaction(db, fn(tx) {
-        use _ <- result.try(lock_session(tx, candidate.session_id))
-        case require_live(tx, candidate.session_id) {
-          Error(Deleted) -> Ok(False)
-          Error(error) -> Error(error)
-          Ok(_) -> {
-            use current <- result.try(
+    [candidate, ..] -> {
+      use admitted <- result.try(
+        transaction(db, fn(tx) {
+          use _ <- result.try(lock_session(tx, candidate.session_id))
+          case require_live(tx, candidate.session_id) {
+            Error(Deleted) -> Ok(None)
+            Error(error) -> Error(error)
+            Ok(_) -> {
+              use current <- result.try(
+                pog.query(
+                  "SELECT session_id,start_sequence,payload,digest,object_key,end_sequence,archive_format,NULL::text FROM retrace_chunks WHERE session_id=$1 AND start_sequence=$2",
+                )
+                |> pog.parameter(pog.text(candidate.session_id))
+                |> pog.parameter(pog.int(candidate.start))
+                |> pog.returning(chunk_decoder())
+                |> pog.execute(tx)
+                |> result.map_error(Database),
+              )
+              case current.rows {
+                [Chunk(payload: Some(payload), ..), ..] -> {
+                  use attempt <- result.try(admit_write(
+                    tx,
+                    candidate.session_id,
+                    candidate.object_key,
+                  ))
+                  Ok(Some(#(attempt, payload)))
+                }
+                _ -> Ok(None)
+              }
+            }
+          }
+        }),
+      )
+      case admitted {
+        None -> Ok(False)
+        Some(#(attempt, payload)) -> {
+          use _ <- result.try(dispatch(
+            db,
+            store,
+            attempt,
+            candidate.object_key,
+            compress(payload),
+          ))
+          transaction(db, fn(tx) {
+            use _ <- result.try(lock_session(tx, candidate.session_id))
+            use _ <- result.try(require_live(tx, candidate.session_id))
+            use _ <- result.try(
               pog.query(
-                "SELECT session_id,start_sequence,payload,digest,object_key,end_sequence,archive_format,NULL::text FROM retrace_chunks WHERE session_id=$1 AND start_sequence=$2",
+                "UPDATE retrace_chunks SET payload=NULL WHERE session_id=$1 AND start_sequence=$2 AND digest=$3",
               )
               |> pog.parameter(pog.text(candidate.session_id))
               |> pog.parameter(pog.int(candidate.start))
-              |> pog.returning(chunk_decoder())
+              |> pog.parameter(pog.text(candidate.digest))
               |> pog.execute(tx)
               |> result.map_error(Database),
             )
-            case current.rows {
-              [Chunk(payload: Some(payload), ..), ..] -> {
-                use _ <- result.try(
-                  store.put(candidate.object_key, compress(payload))
-                  |> result.map_error(Storage),
-                )
-                use _ <- result.try(
-                  pog.query(
-                    "UPDATE retrace_chunks SET payload=NULL WHERE session_id=$1 AND start_sequence=$2 AND digest=$3",
-                  )
-                  |> pog.parameter(pog.text(candidate.session_id))
-                  |> pog.parameter(pog.int(candidate.start))
-                  |> pog.parameter(pog.text(candidate.digest))
-                  |> pog.execute(tx)
-                  |> result.map_error(Database),
-                )
-                Ok(True)
-              }
-              _ -> Ok(False)
-            }
-          }
+            Ok(True)
+          })
         }
-      })
+      }
+    }
   }
+}
+
+/// Record, inside the session lock and a committed transaction, that an upload
+/// is about to be dispatched. The caller has already checked the fence.
+fn admit_write(
+  tx: pog.Connection,
+  session_id: String,
+  key: String,
+) -> Result(Int, Error) {
+  use rows <- result.try(
+    pog.query(
+      "INSERT INTO retrace_write_attempts(session_id,object_key) VALUES($1,$2) RETURNING attempt_id",
+    )
+    |> pog.parameter(pog.text(session_id))
+    |> pog.parameter(pog.text(key))
+    |> pog.returning(decode.field(0, decode.int, decode.success))
+    |> pog.execute(tx)
+    |> result.map_error(Database),
+  )
+  case rows.rows {
+    [id] -> Ok(id)
+    _ -> Error(Conflict)
+  }
+}
+
+/// Call put for an admitted attempt, then record what the outcome shows. A
+/// returned success means the provider finished the write.
+fn dispatch(
+  db: pog.Connection,
+  store: ObjectStore,
+  attempt: Int,
+  key: String,
+  body: BitArray,
+) -> Result(Nil, Error) {
+  case store.put(key, body) {
+    Ok(_) ->
+      settle_write(db, attempt, "completed", Some("put returned success"))
+    Error(error) -> {
+      // Best effort: if recording fails the attempt stays in flight, which is
+      // equally unproven.
+      let _ = settle_write(db, attempt, "failed", None)
+      Error(Storage(error))
+    }
+  }
+}
+
+/// Move an attempt that might still publish to a state of the given name.
+fn settle_write(
+  db: pog.Connection,
+  attempt: Int,
+  state: String,
+  basis: Option(String),
+) -> Result(Nil, Error) {
+  pog.query(
+    "UPDATE retrace_write_attempts SET state=$2,basis=$3,resolved_at=CASE WHEN $2 IN ('completed','quiesced') THEN clock_timestamp() END WHERE attempt_id=$1 AND state IN ('in_flight','failed')",
+  )
+  |> pog.parameter(pog.int(attempt))
+  |> pog.parameter(pog.text(state))
+  |> pog.parameter(pog.nullable(pog.text, basis))
+  |> pog.execute(db)
+  |> result.replace(Nil)
+  |> result.map_error(Database)
+}
+
+fn attempt_decoder() -> decode.Decoder(WriteAttempt) {
+  use id <- decode.field(0, decode.int)
+  use session <- decode.field(1, decode.string)
+  use key <- decode.field(2, decode.string)
+  use state <- decode.field(3, decode.string)
+  use basis <- decode.field(4, decode.optional(decode.string))
+  use age <- decode.field(5, decode.int)
+  let state = case state {
+    "failed" -> Failed
+    "completed" -> Completed
+    "quiesced" -> Quiesced
+    _ -> InFlight
+  }
+  decode.success(WriteAttempt(id, session, key, state, basis, age))
+}
+
+const attempt_select =
+  "SELECT attempt_id,session_id,object_key,state,basis,extract(epoch FROM clock_timestamp()-admitted_at)::bigint FROM retrace_write_attempts"
+
+/// List up to `limit` write attempts of a session, oldest first, with their
+/// states and the basis the host gave for each quiescent one.
+pub fn write_attempts(
+  db: pog.Connection,
+  id: String,
+  limit: Int,
+) -> Result(List(WriteAttempt), Error) {
+  pog.query(
+    attempt_select <> " WHERE session_id=$1 ORDER BY attempt_id LIMIT $2",
+  )
+  |> pog.parameter(pog.text(id))
+  |> pog.parameter(pog.int(int.max(limit, 0)))
+  |> pog.returning(attempt_decoder())
+  |> pog.execute(db)
+  |> result.map(fn(returned) { returned.rows })
+  |> result.map_error(Database)
 }
 
 /// A transaction-scoped lock also exists before first admission, so fencing an
@@ -352,7 +537,7 @@ pub fn fence_in_transaction(
     |> result.map_error(Database),
   )
   pog.query(
-    "INSERT INTO retrace_deletion_objects(session_id,object_key) SELECT session_id,object_key FROM retrace_chunks WHERE session_id=$1 UNION SELECT session_id,object_key FROM retrace_archive_objects WHERE session_id=$1 ON CONFLICT DO NOTHING",
+    "INSERT INTO retrace_deletion_objects(session_id,object_key) SELECT session_id,object_key FROM retrace_chunks WHERE session_id=$1 UNION SELECT session_id,object_key FROM retrace_archive_objects WHERE session_id=$1 UNION SELECT session_id,object_key FROM retrace_write_attempts WHERE session_id=$1 ON CONFLICT DO NOTHING",
   )
   |> pog.parameter(pog.text(id))
   |> pog.execute(tx)
@@ -360,16 +545,87 @@ pub fn fence_in_transaction(
   |> result.map_error(Database)
 }
 
-/// Idempotently delete a fenced session's objects before clearing its recording
-/// rows. Each pass handles at most 8 keys and returns True only once all keys
-/// and recording rows are cleared. Keep the fence and keys for restoration/late-PUT reconciliation. Repeated
-/// calls deliberately repeat DELETE: a worker killed during PUT can leave an
-/// ambiguous remote operation even after its database transaction is rolled back.
+fn count(db: pog.Connection, sql: String, id: String) -> Result(Int, Error) {
+  use rows <- result.try(
+    pog.query(sql)
+    |> pog.parameter(pog.text(id))
+    |> pog.returning(decode.field(0, decode.int, decode.success))
+    |> pog.execute(db)
+    |> result.map_error(Database),
+  )
+  Ok(list.first(rows.rows) |> result.unwrap(0))
+}
+
+/// Ask the host about every attempt that might still publish and record each
+/// quiescent answer with its basis. A `MayPublish` answer changes nothing.
+fn ask_host(
+  tx: pog.Connection,
+  eraser: Eraser,
+  id: String,
+) -> Result(Nil, Error) {
+  use pending <- result.try(
+    pog.query(
+      attempt_select
+      <> " WHERE session_id=$1 AND state IN ('in_flight','failed') ORDER BY attempt_id",
+    )
+    |> pog.parameter(pog.text(id))
+    |> pog.returning(attempt_decoder())
+    |> pog.execute(tx)
+    |> result.map_error(Database),
+  )
+  list.try_each(pending.rows, fn(attempt) {
+    case eraser.quiesced(attempt) {
+      Quiescent(basis) -> settle_write(tx, attempt.id, "quiesced", Some(basis))
+      MayPublish -> Ok(Nil)
+    }
+  })
+}
+
+const unresolved_count =
+  "SELECT count(*) FROM retrace_write_attempts WHERE session_id=$1 AND state IN ('in_flight','failed')"
+
+/// Report whether a session is erased, erasing or waiting on uploads that might
+/// still publish. `None` means the session has no fence.
+pub fn erasure_status(
+  db: pog.Connection,
+  id: String,
+) -> Result(Option(Erasure), Error) {
+  use fenced <- result.try(
+    pog.query(
+      "SELECT reconciled_at IS NOT NULL FROM retrace_tombstones WHERE session_id=$1",
+    )
+    |> pog.parameter(pog.text(id))
+    |> pog.returning(decode.field(0, decode.bool, decode.success))
+    |> pog.execute(db)
+    |> result.map_error(Database),
+  )
+  case fenced.rows {
+    [] -> Ok(None)
+    [True, ..] -> Ok(Some(Erased))
+    [False, ..] -> {
+      use unresolved <- result.try(count(db, unresolved_count, id))
+      case unresolved {
+        0 -> Ok(Some(Erasing))
+        _ -> Ok(Some(AwaitingWriters(unresolved)))
+      }
+    }
+  }
+}
+
+/// Idempotently erase a fenced session and report its definitive state. Each
+/// pass first asks the host, through `eraser.quiesced`, about every attempt that
+/// might still publish. Keys owned by an attempt not yet proven quiescent are
+/// never deleted or counted as done, and the result is `AwaitingWriters`. Each
+/// pass deletes at most 8 keys; recording rows are cleared and the tombstone is
+/// marked reconciled only once every attempt is completed or quiescent and every
+/// key deleted.
+/// Repeating a completed session deletes its retained keys again, which also
+/// covers a backup restore that brought objects back.
 pub fn erase(
   db: pog.Connection,
-  remove: fn(String) -> Result(Nil, StorageError),
+  eraser: Eraser,
   id: String,
-) -> Result(Bool, Error) {
+) -> Result(Erasure, Error) {
   transaction(db, fn(tx) {
     use _ <- result.try(lock_session(tx, id))
     use _ <- result.try(case require_live(tx, id) {
@@ -389,15 +645,16 @@ pub fn erase(
     )
     use _ <- result.try(
       pog.query(
-        "UPDATE retrace_tombstones SET reconciled_at=NULL WHERE session_id=$1",
+        "UPDATE retrace_tombstones SET reconciled_at=NULL,checked_at=clock_timestamp() WHERE session_id=$1",
       )
       |> pog.parameter(pog.text(id))
       |> pog.execute(tx)
       |> result.map_error(Database),
     )
+    use _ <- result.try(ask_host(tx, eraser, id))
     use keys <- result.try(
       pog.query(
-        "SELECT object_key FROM retrace_deletion_objects WHERE session_id=$1 AND deleted_at IS NULL ORDER BY object_key LIMIT 8",
+        "SELECT object_key FROM retrace_deletion_objects d WHERE d.session_id=$1 AND d.deleted_at IS NULL AND NOT EXISTS (SELECT 1 FROM retrace_write_attempts a WHERE a.session_id=d.session_id AND a.object_key=d.object_key AND a.state IN ('in_flight','failed')) ORDER BY object_key LIMIT 8",
       )
       |> pog.parameter(pog.text(id))
       |> pog.returning(decode.field(0, decode.string, decode.success))
@@ -406,7 +663,7 @@ pub fn erase(
     )
     use _ <- result.try(
       list.try_each(keys.rows, fn(key) {
-        use _ <- result.try(remove(key) |> result.map_error(Storage))
+        use _ <- result.try(eraser.remove(key) |> result.map_error(Storage))
         pog.query(
           "UPDATE retrace_deletion_objects SET deleted_at=now() WHERE session_id=$1 AND object_key=$2",
         )
@@ -417,18 +674,14 @@ pub fn erase(
         |> result.map_error(Database)
       }),
     )
-    use remaining <- result.try(
-      pog.query(
-        "SELECT object_key FROM retrace_deletion_objects WHERE session_id=$1 AND deleted_at IS NULL LIMIT 1",
-      )
-      |> pog.parameter(pog.text(id))
-      |> pog.returning(decode.field(0, decode.string, decode.success))
-      |> pog.execute(tx)
-      |> result.map_error(Database),
-    )
-    case remaining.rows {
-      [_] -> Ok(False)
-      _ -> {
+    use unresolved <- result.try(count(tx, unresolved_count, id))
+    use remaining <- result.try(count(
+      tx,
+      "SELECT count(*) FROM retrace_deletion_objects WHERE session_id=$1 AND deleted_at IS NULL",
+      id,
+    ))
+    case unresolved, remaining {
+      0, 0 -> {
         use _ <- result.try(
           pog.query("DELETE FROM retrace_archive_objects WHERE session_id=$1")
           |> pog.parameter(pog.text(id))
@@ -458,23 +711,26 @@ pub fn erase(
         )
         |> pog.parameter(pog.text(id))
         |> pog.execute(tx)
-        |> result.map(fn(_) { True })
+        |> result.map(fn(_) { Erased })
         |> result.map_error(Database)
       }
+      0, _ -> Ok(Erasing)
+      waiting, _ -> Ok(AwaitingWriters(waiting))
     }
   })
 }
 
-/// Reconcile one oldest tombstone. Completed deletions are revisited after the
-/// caller-specified interval; this closes ambiguous late remote PUT outcomes.
+/// Advance the least recently checked unfinished tombstone, or one completed
+/// longer ago than `interval_seconds`, and report its erasure state. `None`
+/// means no tombstone is due.
 pub fn erase_next(
   db: pog.Connection,
-  remove: fn(String) -> Result(Nil, StorageError),
+  eraser: Eraser,
   interval_seconds: Int,
-) -> Result(Bool, Error) {
+) -> Result(Option(#(String, Erasure)), Error) {
   use rows <- result.try(
     pog.query(
-      "SELECT session_id FROM retrace_tombstones WHERE reconciled_at IS NULL OR reconciled_at < now() - ($1 * interval '1 second') ORDER BY reconciled_at NULLS FIRST, fenced_at LIMIT 1",
+      "SELECT session_id FROM retrace_tombstones WHERE reconciled_at IS NULL OR reconciled_at < now() - ($1 * interval '1 second') ORDER BY checked_at NULLS FIRST, fenced_at LIMIT 1",
     )
     |> pog.parameter(pog.int(int.max(interval_seconds, 1)))
     |> pog.returning(decode.field(0, decode.string, decode.success))
@@ -482,8 +738,10 @@ pub fn erase_next(
     |> result.map_error(Database),
   )
   case rows.rows {
-    [] -> Ok(False)
-    [id, ..] -> erase(db, remove, id) |> result.map(fn(_) { True })
+    [] -> Ok(None)
+    [id, ..] ->
+      erase(db, eraser, id)
+      |> result.map(fn(state) { Some(#(id, state)) })
   }
 }
 
@@ -1112,88 +1370,116 @@ fn gather_archive(
   }
 }
 
+fn plan_is_planned(
+  tx: pog.Connection,
+  plan: ArchivePlan,
+) -> Result(Bool, Error) {
+  use active <- result.try(
+    pog.query(
+      "SELECT object_key FROM retrace_archive_objects WHERE object_key=$1 AND state='planned'",
+    )
+    |> pog.parameter(pog.text(plan.key))
+    |> pog.returning(decode.field(0, decode.string, decode.success))
+    |> pog.execute(tx)
+    |> result.map_error(Database),
+  )
+  Ok(active.rows != [])
+}
+
+// Admission commits before the put, and the put and readback run outside the
+// lock, so a fence never waits on a remote call and never mistakes an uncertain
+// put for a settled one. Pointers change only after a locked recheck.
 fn publish_plan(
   db: pog.Connection,
   store: ObjectStore,
   plan: ArchivePlan,
 ) -> Result(Bool, Error) {
-  transaction(db, fn(tx) {
-    use _ <- result.try(lock_session(tx, plan.id))
-    use _ <- result.try(require_live(tx, plan.id))
-    use active <- result.try(
-      pog.query(
-        "SELECT object_key FROM retrace_archive_objects WHERE object_key=$1 AND state='planned'",
-      )
-      |> pog.parameter(pog.text(plan.key))
-      |> pog.returning(decode.field(0, decode.string, decode.success))
-      |> pog.execute(tx)
-      |> result.map_error(Database),
-    )
-    case active.rows {
-      [] -> Ok(False)
-      _ -> {
-        use _ <- result.try(
-          store.put(plan.key, compress(plan.payload))
-          |> result.map_error(Storage),
-        )
-        use stored <- result.try(
-          store.get(plan.key) |> result.map_error(Storage),
-        )
-        use verified <- result.try(
-          decompress_bounded(stored, archive.max_bytes)
-          |> result.replace_error(CorruptArchive),
-        )
-        use _ <- result.try(
-          case digest(verified) == plan.digest && verified == plan.payload {
-            True -> Ok(Nil)
-            False -> Error(CorruptArchive)
-          },
-        )
-        // Retain every superseded legacy or segment key before changing pointers.
-        use _ <- result.try(
-          pog.query(
-            "INSERT INTO retrace_archive_objects(object_key,session_id,start_sequence,end_sequence,digest,state) SELECT object_key,session_id,min(start_sequence),max(end_sequence),min(digest),'retired' FROM retrace_chunks WHERE session_id=$1 AND start_sequence>=$2 AND end_sequence<=$3 AND object_key<>$4 GROUP BY object_key,session_id ON CONFLICT(object_key) DO NOTHING",
-          )
-          |> pog.parameter(pog.text(plan.id))
-          |> pog.parameter(pog.int(plan.start))
-          |> pog.parameter(pog.int(plan.end))
-          |> pog.parameter(pog.text(plan.key))
-          |> pog.execute(tx)
-          |> result.map_error(Database),
-        )
-        use _ <- result.try(
-          pog.query(
-            "UPDATE retrace_archive_objects SET state='retired',last_deleted_at=NULL WHERE session_id=$1 AND state='current' AND object_key IN (SELECT object_key FROM retrace_chunks WHERE session_id=$1 AND start_sequence>=$2 AND end_sequence<=$3)",
-          )
-          |> pog.parameter(pog.text(plan.id))
-          |> pog.parameter(pog.int(plan.start))
-          |> pog.parameter(pog.int(plan.end))
-          |> pog.execute(tx)
-          |> result.map_error(Database),
-        )
-        use _ <- result.try(
-          pog.query(
-            "UPDATE retrace_chunks SET payload=NULL,archive_format=2,object_key=$4 WHERE session_id=$1 AND start_sequence>=$2 AND end_sequence<=$3",
-          )
-          |> pog.parameter(pog.text(plan.id))
-          |> pog.parameter(pog.int(plan.start))
-          |> pog.parameter(pog.int(plan.end))
-          |> pog.parameter(pog.text(plan.key))
-          |> pog.execute(tx)
-          |> result.map_error(Database),
-        )
-        use _ <- result.try(
-          pog.query(
-            "UPDATE retrace_archive_objects SET state='current',payload=NULL WHERE object_key=$1 AND state='planned'",
-          )
-          |> pog.parameter(pog.text(plan.key))
-          |> pog.execute(tx)
-          |> result.map_error(Database),
-        )
-        Ok(True)
+  use admitted <- result.try(
+    transaction(db, fn(tx) {
+      use _ <- result.try(lock_session(tx, plan.id))
+      use _ <- result.try(require_live(tx, plan.id))
+      use active <- result.try(plan_is_planned(tx, plan))
+      case active {
+        False -> Ok(None)
+        True -> admit_write(tx, plan.id, plan.key) |> result.map(Some)
       }
+    }),
+  )
+  case admitted {
+    None -> Ok(False)
+    Some(attempt) -> {
+      use _ <- result.try(dispatch(
+        db,
+        store,
+        attempt,
+        plan.key,
+        compress(plan.payload),
+      ))
+      use stored <- result.try(store.get(plan.key) |> result.map_error(Storage))
+      use verified <- result.try(
+        decompress_bounded(stored, archive.max_bytes)
+        |> result.replace_error(CorruptArchive),
+      )
+      use _ <- result.try(
+        case digest(verified) == plan.digest && verified == plan.payload {
+          True -> Ok(Nil)
+          False -> Error(CorruptArchive)
+        },
+      )
+      transaction(db, fn(tx) {
+        use _ <- result.try(lock_session(tx, plan.id))
+        use _ <- result.try(require_live(tx, plan.id))
+        use active <- result.try(plan_is_planned(tx, plan))
+        case active {
+          False -> Ok(False)
+          True -> {
+            // Retain every superseded legacy or segment key before changing pointers.
+            use _ <- result.try(
+              pog.query(
+                "INSERT INTO retrace_archive_objects(object_key,session_id,start_sequence,end_sequence,digest,state) SELECT object_key,session_id,min(start_sequence),max(end_sequence),min(digest),'retired' FROM retrace_chunks WHERE session_id=$1 AND start_sequence>=$2 AND end_sequence<=$3 AND object_key<>$4 GROUP BY object_key,session_id ON CONFLICT(object_key) DO NOTHING",
+              )
+              |> pog.parameter(pog.text(plan.id))
+              |> pog.parameter(pog.int(plan.start))
+              |> pog.parameter(pog.int(plan.end))
+              |> pog.parameter(pog.text(plan.key))
+              |> pog.execute(tx)
+              |> result.map_error(Database),
+            )
+            use _ <- result.try(
+              pog.query(
+                "UPDATE retrace_archive_objects SET state='retired',last_deleted_at=NULL WHERE session_id=$1 AND state='current' AND object_key IN (SELECT object_key FROM retrace_chunks WHERE session_id=$1 AND start_sequence>=$2 AND end_sequence<=$3)",
+              )
+              |> pog.parameter(pog.text(plan.id))
+              |> pog.parameter(pog.int(plan.start))
+              |> pog.parameter(pog.int(plan.end))
+              |> pog.execute(tx)
+              |> result.map_error(Database),
+            )
+            use _ <- result.try(
+              pog.query(
+                "UPDATE retrace_chunks SET payload=NULL,archive_format=2,object_key=$4 WHERE session_id=$1 AND start_sequence>=$2 AND end_sequence<=$3",
+              )
+              |> pog.parameter(pog.text(plan.id))
+              |> pog.parameter(pog.int(plan.start))
+              |> pog.parameter(pog.int(plan.end))
+              |> pog.parameter(pog.text(plan.key))
+              |> pog.execute(tx)
+              |> result.map_error(Database),
+            )
+            use _ <- result.try(
+              pog.query(
+                "UPDATE retrace_archive_objects SET state='current',payload=NULL WHERE object_key=$1 AND state='planned'",
+              )
+              |> pog.parameter(pog.text(plan.key))
+              |> pog.execute(tx)
+              |> result.map_error(Database),
+            )
+            Ok(True)
+          }
+        }
+      })
     }
-  })
+  }
 }
 
 /// Reconcile at most eight retired keys. First cleanup is immediate; the interval

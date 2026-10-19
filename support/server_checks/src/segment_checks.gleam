@@ -159,11 +159,15 @@ fn reclaim(db: pog.Connection, root: String) -> Nil {
 }
 
 fn erase(db: pog.Connection, root: String, id: String) -> Nil {
-  let assert Ok(done) =
-    server.erase(db, fn(key) { directory.remove(root, key) }, id)
-  case done {
-    True -> Nil
-    False -> erase(db, root, id)
+  let eraser =
+    server.Eraser(fn(key) { directory.remove(root, key) }, fn(_) {
+      server.MayPublish
+    })
+  let assert Ok(state) = server.erase(db, eraser, id)
+  case state {
+    server.Erased -> Nil
+    server.Erasing -> erase(db, root, id)
+    server.AwaitingWriters(_) -> panic as "an unproven writer remains"
   }
 }
 
@@ -242,7 +246,6 @@ fn concurrent_publication(
   let #(_, _) = append(db, session, recorder, 8, 1, "1")
   let entered = process.new_subject()
   let completed = process.new_subject()
-  let fenced = process.new_subject()
   let blocking =
     server.ObjectStore(
       fn(key, bytes) {
@@ -258,21 +261,21 @@ fn concurrent_publication(
       process.send(completed, server.archive_segment_next(db, blocking, 0))
     })
   let assert Ok(release) = process.receive(entered, 3000)
-  let other = process.new_subject()
-  let _ =
-    process.spawn(fn() {
-      process.send(other, server.archive_segment_next(db, store, 0))
-    })
-  let assert Error(Nil) = process.receive(other, 50)
-  let _ =
-    process.spawn(fn() { process.send(fenced, server.fence(db, session.id)) })
-  let assert Error(Nil) = process.receive(fenced, 50)
-  process.send(release, Nil)
-  let assert Ok(Ok(True)) = process.receive(completed, 3000)
-  let assert Ok(outcome) = process.receive(other, 3000)
-  assert outcome == Ok(False) || outcome == Error(server.Deleted)
-  let assert Ok(Ok(_)) = process.receive(fenced, 3000)
+  // A second worker neither waits for the in-flight put nor shares its attempt.
+  let assert Ok(True) = server.archive_segment_next(db, store, 0)
+  // The fence does not wait for the remote call; erasure waits for its attempt.
+  let assert Ok(_) = server.fence(db, session.id)
   let assert Error(server.Deleted) = server.read(db, store, session.id, 0)
+  let assert Ok(server.AwaitingWriters(1)) =
+    server.erase(
+      db,
+      server.Eraser(fn(key) { directory.remove(root, key) }, fn(_) {
+        server.MayPublish
+      }),
+      session.id,
+    )
+  process.send(release, Nil)
+  let assert Ok(Error(server.Deleted)) = process.receive(completed, 3000)
   let old_keys = keys(root, session.id)
   erase(db, root, session.id)
   assert keys(root, session.id) == []
