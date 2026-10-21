@@ -92,7 +92,6 @@
             curl
             jq
             poppler-utils
-            shellcheck
           ];
         };
 

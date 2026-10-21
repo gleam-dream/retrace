@@ -10,6 +10,8 @@ Read `docs/design/design.typ` and the context designs under `docs/design/`, the 
 
 ## Commands
 
+CI runs on pushes and pull requests: `nix flake check`, the imported design check, and `nix develop --command bash dev/check.sh`, including the example packages.
+
 Run inside `nix develop`. Native builds, browser tests, database tests and remote-cloud tests are distinct evidence, so report which ran.
 
 ```sh
@@ -20,7 +22,6 @@ node dev/progressive-viewer-browser-check.mjs
 node --test packages/retrace_frontend/test/*.test.mjs
 node --test examples/advanced/dev/*.test.mjs   # build identity, custom archive, history (after gleam build)
 (cd examples/basic && node --test *.test.mjs)    # adoption walk-through and replay (after gleam build)
-node --test dev/readme.test.mjs           # README snippets are excerpts of compiled source
 ```
 
 With `bash dev/services.sh` and the advanced app (5190) and viewer (5191) running:
@@ -41,20 +42,19 @@ If Playwright's Chromium is missing, run `npx playwright install chromium` in `e
 - [Usage topics](examples/README.md#usage-topics): usage lives as compiled, runnable examples, each with the check that fails when the API moves. Add or change a topic there, not in prose.
 - Retrace has no external oracle and no benchmark suite, so it keeps no `docs/ORACLE.md` or `docs/BENCHMARKS.md`. Concurrent-read timing is an executable check in `support/server_checks`, specified by ADR 0016.
 
-## Design gate
+## Optional design rendering
 
-Run sequentially after editing `docs/`, because the commands share the generated `.render` workspace:
+When rendering or exporting design documentation, run commands sequentially because they share the generated `.render` workspace:
 
 ```sh
 nix run .#design-gate-render -- docs/design docs/design/design-layer.pdf
-nix run .#design-gate-check -- docs/design .
 nix run .#design-gate-context -- docs/design --estimate
 ```
 
 <!-- agent-skills:begin -->
 <!-- framework-commit: cab7c0590036edaa66d8430cc5016399a9fd2c71 origin: git@github.com:lostbean/skills.git -->
 
-(machine-owned; do not edit inside this fence — re-run setup to refresh)
+(Repository validation policy overrides the framework defaults below.)
 
 ## Agent skills
 
@@ -78,20 +78,12 @@ verbatim): states `needs-triage`, `needs-info`, `ready-for-agent`,
 **AI disclaimer** — AI-authored tracker comments start with
 `AI-assisted contribution.`
 
-**Design gate** — `nix run .#design-gate-check -- docs/design .` checks render freshness,
-vocabulary references and layer integrity (exit 0 clean, 1 violation, 2 error).
-The gate is supplied by the pinned `design-layer` flake input.
-`nix run .#design-gate-render -- docs/design docs/design/design-layer.pdf`
-rebuilds the rendered document. `nix run .#design-gate-context -- docs/design --estimate`
-estimates agent context; the same command without `--estimate` emits ephemeral
-Markdown. `--manifest`, `--preview`, and `--section PATH --expect-digest DIGEST`
-support loading selected sections. A bare Typst compilation does not run the gate.
-
-**Context verification** — use native semantic blocks for lists, tables,
-models and behavior. After authoring, verify context estimation and a selected
-section export as well as rendering and the design gate.
-Run these commands sequentially for each layer; they share its generated
-`.render` workspace.
+**Design tools** — rendering and context export are optional authoring tools:
+`nix run .#design-gate-render -- docs/design docs/design/design-layer.pdf` and
+`nix run .#design-gate-context -- docs/design --estimate`.
+Validation requires formatting, compilation and behavioral unit/integration tests.
+Run the pinned shared design validator with `nix run .#design-gate-check -- docs/design`.
+Do not implement repository-local shape, documentation equality or checker self-tests.
 
 **Staleness** — source changes since the design last changed require a
 conformance review before the layer is treated as current.

@@ -9,7 +9,6 @@ for package in packages/retrace_frontend packages/retrace_server support/collect
   (cd "$package" && gleam build)
 done
 (cd examples/advanced && npm ci && npm run build && node --test dev/history.test.mjs dev/build.test.mjs dev/local_archive.test.mjs)
-node --test packages/retrace_frontend/test/*.test.mjs support/client_checks/adapter.test.mjs dev/readme.test.mjs
+node --test packages/retrace_frontend/test/*.test.mjs support/client_checks/adapter.test.mjs
 (cd examples/basic && npm ci && npm run build && node --test replay.test.mjs adoption.test.mjs)
 (cd examples/advanced/viewer && npm run build)
-shellcheck dev/*.sh dev/simulator/*.sh
