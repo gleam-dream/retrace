@@ -1,3 +1,4 @@
+import * as coreUsage from "./build/dev/javascript/retrace_inventory/usage_core.mjs";
 // Adoption walk-through, executed: the inventory application records its accepted
 // transitions through retrace_frontend/capture, delivery acknowledges them, and the
 // delivered batches replay to the same state. Run with `node --test adoption.test.mjs`
@@ -201,4 +202,8 @@ test("replay refuses a different build than the recording's", async () => {
       assert.equal(wrongBuild.isOk(), false);
     },
   );
+});
+
+test("portable core example records and replays a message", () => {
+  coreUsage.main();
 });

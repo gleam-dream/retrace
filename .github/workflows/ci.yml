@@ -25,5 +25,7 @@ jobs:
         run: nix flake check --no-update-lock-file
       - name: Shared design validation
         run: nix run --no-update-lock-file .#design-gate-check -- docs/design .
+      - name: README snippets
+        run: nix run --no-update-lock-file .#snips -- --check --commands deny README.md packages/retrace_frontend/README.md
       - name: Application and example tests
         run: nix develop --no-update-lock-file --command bash dev/check.sh

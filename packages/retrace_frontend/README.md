@@ -33,6 +33,9 @@ retrace_frontend = { git = "https://github.com/gleam-dream/retrace.git", ref = "
 
 Connect capture once and observe each accepted transition with the previous state:
 
+<!-- prettier-ignore-start -->
+
+<!-- snips: ../../examples/basic/src/retrace_inventory.gleam#capture-observe -->
 ```gleam
 let #(recording, save) =
   capture.observe(
@@ -44,23 +47,49 @@ let #(recording, save) =
   )
 ```
 
+<!-- prettier-ignore-end -->
+
 Mount a replay module in the historical entrypoint and retain its disposer:
 
+<!-- prettier-ignore-start -->
+
+<!-- snips: ../../examples/basic/src/retrace_inventory/frame.gleam -->
 ```gleam
-let assert Ok(dispose) =
-  replay.mount(domain.replay_module(), domain.build, "#app", 5000)
+import retrace_frontend/replay
+import retrace_inventory/domain
+
+pub fn mount() -> fn() -> Nil {
+  let assert Ok(dispose) =
+    replay.mount(domain.replay_module(), domain.build, "#app", 5000)
+  dispose
+}
+
 ```
+
+<!-- prettier-ignore-end -->
 
 Mount the viewer from a separate page, and retain and call the returned disposer:
 
+<!-- prettier-ignore-start -->
+
+<!-- snips: ../../examples/basic/src/retrace_inventory/viewer.gleam -->
 ```gleam
-let resolver =
-  viewer.artifacts("/artifacts")
-  |> viewer.with_development(domain.build, domain.contract, "/frame.html")
-let assert Ok(dispose) =
-  viewer.new(viewer.collector("http://127.0.0.1:4417"), resolver)
-  |> viewer.mount("#viewer")
+import retrace_frontend/viewer
+import retrace_inventory/domain
+
+pub fn main() -> fn() -> Nil {
+  let resolver =
+    viewer.artifacts("/artifacts")
+    |> viewer.with_development(domain.build, domain.contract, "/frame.html")
+  let assert Ok(dispose) =
+    viewer.new(viewer.collector("http://127.0.0.1:4417"), resolver)
+    |> viewer.mount("#viewer")
+  dispose
+}
+
 ```
+
+<!-- prettier-ignore-end -->
 
 These excerpts come from the [basic example](../../examples/basic/README.md), which compiles
 and runs them. Custom storage and upload build from typed cold tasks with `client/adapter`,

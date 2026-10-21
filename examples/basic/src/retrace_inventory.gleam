@@ -20,6 +20,7 @@ type Message {
 }
 
 fn init(_: Nil) -> #(Model, effect.Effect(Message)) {
+  // snips-start: capture-start
   let session =
     capture.session("Warehouse", domain.build, domain.contract, "web")
   let assert Ok(#(recording, connect)) =
@@ -29,6 +30,7 @@ fn init(_: Nil) -> #(Model, effect.Effect(Message)) {
       client.browser_storage(),
       client.http_transport("http://127.0.0.1:4417"),
     )
+  // snips-end: capture-start
   #(
     Model(domain.initial(), recording, "Opening local storage"),
     effect.map(connect, Recording),
@@ -54,6 +56,7 @@ fn update(model: Model, message: Message) -> #(Model, effect.Effect(Message)) {
           effect.none(),
         )
         Ok(stock) -> {
+          // snips-start: capture-observe
           let #(recording, save) =
             capture.observe(
               model.capture,
@@ -62,6 +65,7 @@ fn update(model: Model, message: Message) -> #(Model, effect.Effect(Message)) {
               domain.encode,
               domain.encode_command,
             )
+          // snips-end: capture-observe
           let notice = case capture.info(recording).failure {
             Some(reason) -> reason
             None -> model.notice

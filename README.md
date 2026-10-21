@@ -33,6 +33,9 @@ the frontend. Replace the tag with a full commit SHA for an immutable pin.
 The portable core records and reconstructs application-native types. JSON appears only
 at the wire boundary.
 
+<!-- prettier-ignore-start -->
+
+<!-- snips: examples/basic/src/usage_core.gleam -->
 ```gleam
 import retrace
 
@@ -47,7 +50,10 @@ pub fn main() {
   let assert Ok(player) = retrace.step(player, entry)
   assert retrace.model(player) == 3
 }
+
 ```
+
+<!-- prettier-ignore-end -->
 
 Choose replay-safe state and events before encoding. The application owns reducer
 determinism and purity. The [consumer tests](test/retrace_test.gleam) show
@@ -55,10 +61,12 @@ checkpoint resume, typed reducer failure and gap recovery.
 
 For a Lustre application, add `retrace_frontend` and wire capture once:
 
+Import `retrace_frontend/capture` and `retrace_frontend/client`, then start capture:
+
+<!-- prettier-ignore-start -->
+
+<!-- snips: examples/basic/src/retrace_inventory.gleam#capture-start -->
 ```gleam
-import retrace_frontend/capture
-import retrace_frontend/client
-// ...
 let session =
   capture.session("Warehouse", domain.build, domain.contract, "web")
 let assert Ok(#(recording, connect)) =
@@ -68,7 +76,16 @@ let assert Ok(#(recording, connect)) =
     client.browser_storage(),
     client.http_transport("http://127.0.0.1:4417"),
   )
-// ...
+```
+
+<!-- prettier-ignore-end -->
+
+Observe accepted changes using the previous model:
+
+<!-- prettier-ignore-start -->
+
+<!-- snips: examples/basic/src/retrace_inventory.gleam#capture-observe -->
+```gleam
 let #(recording, save) =
   capture.observe(
     model.capture,
@@ -78,6 +95,8 @@ let #(recording, save) =
     domain.encode_command,
   )
 ```
+
+<!-- prettier-ignore-end -->
 
 Observe each accepted transition with the previous state, mount a replay module in a
 historical entrypoint, and mount `retrace_frontend/viewer` in a separate viewer page.
