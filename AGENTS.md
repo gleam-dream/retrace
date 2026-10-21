@@ -18,7 +18,7 @@ Run inside `nix develop`. Native builds, browser tests, database tests and remot
 nix fmt -- PATH...                        # format touched files
 bash dev/check.sh                         # core targets, consumer builds, web bundle, runnable usage examples (scoped gate)
 bash dev/git-consumer-check.sh            # independent Git consumers of the committed revision
-node dev/progressive-viewer-browser-check.mjs
+npm --prefix examples/advanced test -- progressive-viewer-browser-check
 node --test packages/retrace_frontend/test/*.test.mjs
 node --test examples/advanced/dev/*.test.mjs   # build identity, custom archive, history (after gleam build)
 (cd examples/basic && node --test *.test.mjs)    # adoption walk-through and replay (after gleam build)
@@ -29,10 +29,10 @@ With `bash dev/services.sh` and the advanced app (5190) and viewer (5191) runnin
 ```sh
 python3 dev/backend-check.py              # real PostgreSQL with signed local S3 requests
 bash dev/server-check.sh                  # isolated database; injected archive failures and recovery
-node dev/browser-check.mjs                # offline queue, full view, timing, inert and progressive replay
-node dev/basic-browser-check.mjs          # default browser consumer (5193)
-node dev/composition-browser-check.mjs    # advanced custom adapters (5190)
-node dev/viewer-api-browser-check.mjs     # cancellation, remount, typed viewport (5193)
+npm --prefix examples/advanced test -- browser-check                # offline queue, full view, timing, inert and progressive replay
+npm --prefix examples/advanced test -- basic-browser-check          # default browser consumer (5193)
+npm --prefix examples/advanced test -- composition-browser-check    # advanced custom adapters (5190)
+npm --prefix examples/advanced test -- viewer-api-browser-check     # cancellation, remount, typed viewport (5193)
 ```
 
 If Playwright's Chromium is missing, run `npx playwright install chromium` in `examples/advanced`. Native runtime and Simulator checks are in `examples/advanced/README.md` and `dev/simulator/README.md`.

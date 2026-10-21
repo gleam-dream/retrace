@@ -1,16 +1,12 @@
 import {
-  chromium,
+  test,
   expect,
 } from "../examples/advanced/node_modules/@playwright/test/index.mjs";
-import { mkdir, writeFile } from "node:fs/promises";
-const browser = await chromium.launch({ headless: true });
+import { mkdir } from "node:fs/promises";
 await mkdir(".artifacts/composition-check", { recursive: true });
-try {
-  const context = await browser.newContext({
-    viewport: { width: 1440, height: 1000 },
-  });
-  const page = await context.newPage(),
-    errors = [];
+test.use({ viewport: { width: 1440, height: 1000 } });
+test("basic-browser-check", async ({ browser, context, page }) => {
+  const errors = [];
   page.on("pageerror", (e) => errors.push(e.stack || e.message));
   await page.goto("http://127.0.0.1:5193/");
   await expect(
@@ -70,26 +66,5 @@ try {
   await page.evaluate(() => (window.disposeViewer(), window.disposeViewer()));
   await expect(page.locator("#viewer")).toBeEmpty();
   if (errors.length) throw Error(errors.join("\n"));
-  await writeFile(
-    ".artifacts/composition-check/result.json",
-    JSON.stringify(
-      {
-        passed: true,
-        checks: [
-          "default IndexedDB and HTTP transport",
-          "basic public replay adapter",
-          "custom labels and fixed desktop viewport",
-          "nonzero checkpoint range",
-          "inert view",
-          "frame and viewer disposal",
-        ],
-        errors,
-      },
-      null,
-      2,
-    ),
-  );
   console.log("Basic browser checks passed");
-} finally {
-  await browser.close();
-}
+});

@@ -48,8 +48,8 @@ npm run build                           # live bundle plus preserved replay arti
 RETRACE_BUILD_ID=membership-ios-482 npm run build
 node --test dev/history.test.mjs dev/build.test.mjs dev/local_archive.test.mjs
 # From the repository root, with services, app and viewer running:
-node dev/browser-check.mjs              # collector path, ports 5190 and 5191
-node dev/composition-browser-check.mjs  # custom local path, port 5190
+npm --prefix examples/advanced test -- browser-check              # collector path, ports 5190 and 5191
+npm --prefix examples/advanced test -- composition-browser-check  # custom local path, port 5190
 ```
 
 ## Native smoke check

@@ -1,12 +1,10 @@
 // Public package boundary checks in a real browser; no production services needed.
 import {
-  chromium,
+  test,
   expect,
 } from "../examples/advanced/node_modules/@playwright/test/index.mjs";
-const browser = await chromium.launch({ headless: true });
-try {
-  const page = await browser.newPage(),
-    errors = [];
+test("viewer-api-browser-check", async ({ browser, context, page }) => {
+  const errors = [];
   page.on("pageerror", (e) => errors.push(e.message));
   await page.goto("http://127.0.0.1:5193/");
   await expect(
@@ -109,6 +107,4 @@ try {
     "PASS public viewer cancellation, stale replies, remount, styles, typed viewport cleanup",
     result,
   );
-} finally {
-  await browser.close();
-}
+});

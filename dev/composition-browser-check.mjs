@@ -1,19 +1,15 @@
 // Advanced composition: replace delivery and viewer reads without a collector.
 import {
-  chromium,
+  test,
   expect,
 } from "../examples/advanced/node_modules/@playwright/test/index.mjs";
-import { mkdir, writeFile } from "node:fs/promises";
-const browser = await chromium.launch({ headless: true });
+import { mkdir } from "node:fs/promises";
 await mkdir(".artifacts/composition-check", { recursive: true });
-try {
-  const context = await browser.newContext({
-    viewport: { width: 430, height: 932 },
-  });
+test.use({ viewport: { width: 430, height: 932 } });
+test("composition-browser-check", async ({ browser, context, page }) => {
   // This mode must work even with every collector request denied.
   await context.route("http://127.0.0.1:4417/**", (route) => route.abort());
-  const page = await context.newPage(),
-    errors = [];
+  const errors = [];
   page.on("pageerror", (e) => errors.push(e.message));
   await page.goto(
     "http://127.0.0.1:5190/?user=Composition&storage=local&diagnostics",
@@ -80,25 +76,5 @@ try {
   ).toBeVisible();
   await page.screenshot({ path: ".artifacts/composition-check/advanced.png" });
   if (errors.length) throw Error(errors.join("\n"));
-  await writeFile(
-    ".artifacts/composition-check/result.json",
-    JSON.stringify(
-      {
-        passed: true,
-        session: id,
-        checks: [
-          "custom storage and transport without collector",
-          "typed custom source",
-          "partial range",
-          "missing artifact and corrected retry",
-          "full inert viewport",
-        ],
-      },
-      null,
-      2,
-    ),
-  );
   console.log("PASS advanced custom composition", id);
-} finally {
-  await browser.close();
-}
+});

@@ -1,19 +1,16 @@
 import {
-  chromium,
+  test,
   expect,
 } from "../examples/advanced/node_modules/@playwright/test/index.mjs";
 import { mkdir, writeFile } from "node:fs/promises";
-const browser = await chromium.launch({ headless: true });
 const user = `browser-${Date.now()}`,
   appUrl = process.env.RETRACE_APP_URL || "http://127.0.0.1:5190",
   viewerUrl = "http://127.0.0.1:5191",
   endpoint = "http://127.0.0.1:4417";
 await mkdir(".artifacts/viewer-check", { recursive: true });
-try {
-  const context = await browser.newContext({
-      viewport: { width: 390, height: 844 },
-    }),
-    app = await context.newPage(),
+test.use({ viewport: { width: 390, height: 844 } });
+test("browser-check", async ({ browser, context, page }) => {
+  const app = page,
     errors = [];
   app.on("pageerror", (e) => errors.push(e.message));
   let disconnected = true;
@@ -72,9 +69,8 @@ try {
   expect(entries[1].elapsed_ms - entries[0].elapsed_ms).toBeGreaterThanOrEqual(
     2900,
   );
-  const viewer = await browser.newPage({
-    viewport: { width: 1440, height: 1000 },
-  });
+  const viewer = await context.newPage();
+  await viewer.setViewportSize({ width: 1440, height: 1000 });
   viewer.on("pageerror", (e) => errors.push(e.message));
   let uploads = 0;
   viewer.on("request", (req) => {
@@ -185,8 +181,4 @@ try {
   console.log(
     `PASS offline recovery, full screen, timestamp gaps, seek, route, viewport, inert replay: ${id}`,
   );
-} finally {
-  await browser.close();
-}
-
-await import("./progressive-viewer-browser-check.mjs");
+});

@@ -1,9 +1,9 @@
 // Explicit real-browser gate: npm ci in examples/advanced first, then
-// CHROME_BIN=/path/to/chrome node dev/opaque-frame-check.mjs
+// CHROME_BIN=/path/to/chrome npm --prefix examples/advanced test -- opaque-frame-check
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
-import { chromium } from "../examples/advanced/node_modules/playwright/index.mjs";
+import { test } from "../examples/advanced/node_modules/@playwright/test/index.mjs";
 const modules = new Set([
   "viewer.mjs",
   "channel.mjs",
@@ -53,17 +53,14 @@ const server = createServer(async (request, response) => {
     });
   </script></body></html>`);
 });
-await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
-origin = `http://127.0.0.1:${server.address().port}`;
-let browser;
-try {
-  browser = await chromium.launch({
-    headless: true,
-    ...(process.env.CHROME_BIN
-      ? { executablePath: process.env.CHROME_BIN }
-      : {}),
-  });
-  const page = await browser.newPage();
+test.beforeAll(async () => {
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  origin = `http://127.0.0.1:${server.address().port}`;
+});
+test.afterAll(async () => {
+  await new Promise((resolve) => server.close(resolve));
+});
+test("opaque frame reload and disposal", async ({ page }) => {
   await page.goto(origin + "/?session=one");
   const frame = page.frameLocator("iframe");
   await frame.locator('body[data-loaded="yes"]').waitFor({ timeout: 3000 });
@@ -92,7 +89,4 @@ try {
   console.log(
     "PASS real opaque iframe load, seek, fresh nonce/window on reload and disposal",
   );
-} finally {
-  await browser?.close();
-  await new Promise((resolve) => server.close(resolve));
-}
+});

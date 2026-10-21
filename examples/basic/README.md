@@ -38,7 +38,7 @@ Open http://127.0.0.1:5193/, receive or reserve a notebook, then follow
 npm run build
 node --test replay.test.mjs adoption.test.mjs
 # From the repository root, with local services and this app running:
-node dev/basic-browser-check.mjs
+npm --prefix examples/advanced test -- basic-browser-check
 ```
 
 `replay.test.mjs` loads recordings through the application's replay module.

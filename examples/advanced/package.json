@@ -8,7 +8,7 @@
     "dev": "npm run build:gleam && vite --host 127.0.0.1 --port 5190 --strictPort",
     "build": "gleam build && node dev/build.mjs",
     "tauri": "tauri",
-    "test": "node ../../dev/browser-check.mjs",
+    "test": "playwright test --config ../../playwright.config.mjs",
     "viewer": "npm --prefix viewer run dev"
   },
   "dependencies": {

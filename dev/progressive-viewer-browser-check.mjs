@@ -3,7 +3,7 @@
 import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
 import {
-  chromium,
+  test,
   expect,
 } from "../examples/advanced/node_modules/@playwright/test/index.mjs";
 const root = new URL("../packages/retrace_frontend/src/", import.meta.url);
@@ -27,10 +27,13 @@ const server = createServer(async (request, response) => {
     response.end(error.message);
   }
 });
-await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
-const browser = await chromium.launch({ headless: true });
-try {
-  const page = await browser.newPage();
+test.beforeAll(async () => {
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+});
+test.afterAll(async () => {
+  await new Promise((resolve) => server.close(resolve));
+});
+test("progressive retrieval, retry and cancellation", async ({ page }) => {
   page.setDefaultTimeout(5000);
   const errors = [];
   page.on("pageerror", (error) => errors.push(error.message));
@@ -324,7 +327,4 @@ try {
   console.log(
     "PASS progressive first paint, retained-prefix retry, stable playhead/frame, cancellation and stale-session fencing",
   );
-} finally {
-  await browser.close();
-  server.close();
-}
+});
