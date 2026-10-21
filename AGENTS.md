@@ -10,6 +10,8 @@ Read `docs/design/design.typ` and the context designs under `docs/design/`, the 
 
 ## Commands
 
+- When updating dependency pins, reconcile affected `manifest.toml` files in examples, consumers and nested packages through Gleam, then run the full repository gate; updating the root lock alone is insufficient.
+
 CI runs on pushes and pull requests: `nix flake check`, the imported design check, and `nix develop --command bash dev/check.sh`, including the example packages.
 
 Run inside `nix develop`. Native builds, browser tests, database tests and remote-cloud tests are distinct evidence, so report which ran.
