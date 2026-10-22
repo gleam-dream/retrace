@@ -47,4 +47,4 @@ xcodebuild test -quiet \
 node dev/simulator/check_browser.mjs SESSION_UUID
 ```
 
-Evidence and limits are specified in the [design](../../docs/design/design.typ).
+Evidence and limits are specified in the [design](../../docs/design/design-layer.pdf).

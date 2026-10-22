@@ -1,23 +1,50 @@
 # Retrace
 
-Record selected application messages, deliver them durably, and reconstruct sessions
-for inspection. The same Lustre example runs in a browser and a Tauri shell.
+Record selected application state and messages, deliver them durably, and
+reconstruct a session for inspection. Retrace includes a portable typed core,
+Lustre capture and replay, an optional viewer, and a server package for storage
+and retrieval.
 
-Retrace is experimental and distributed as source from this Git repository. Its APIs
-may change before 1.0, and the packages are not published to Hex.
+The packages are experimental, distributed from Git and not published to Hex.
+APIs may change before 1.0. Browser and Tauri examples use the same application
+model; native integration has its own checks and runbook.
+
+## Capabilities
+
+- Record application-native events with typed checkpoints and sequence checks.
+- Encode and validate versioned recording batches at the wire boundary.
+- Capture accepted Lustre transitions using caller-supplied safe projections.
+- Queue delivery through browser persistence or explicit storage/transport adapters.
+- Reconstruct a full historical application view in an inert replay frame.
+- Inspect recordings through the optional viewer and replaceable data sources.
+- Index sessions, admit batches atomically and read them in bounded order.
+- Archive through local, S3-compatible or application-supplied object storage.
+- Use optional bounded concurrent reads and caller-driven erasure.
+
+## When to use Retrace
+
+- Add replayable inspection to a Lustre browser application using the provided
+  persistence, delivery and viewer defaults.
+- Retain the view and reducer for a particular application build so a later
+  inspection reconstructs the state that build understood.
+- Integrate a Tauri shell or your own collector, storage and viewer adapters.
+
+Retrace records explicitly selected state and messages. It does not record pixels,
+arbitrary DOM changes, native screens or OS dialogs. The server package is a
+library to host, not a managed collection service.
 
 ## Packages
 
-| Package            | Owns                                                                      | Application supplies                                                 |
-| ------------------ | ------------------------------------------------------------------------- | -------------------------------------------------------------------- |
-| `retrace`          | Typed recording, checkpoints, reconstruction and wire validation          | Model, event types, safe codecs and pure reducer                     |
-| `retrace_frontend` | Browser/Tauri delivery, Lustre capture/replay and optional viewer modules | Safe projections, adapters, full view and explicit runtime lifetimes |
-| `retrace_server`   | Atomic admission, indexing, archive and retrieval                         | Database pool, object store and worker lifetime                      |
+| Package                                                   | Owns                                                               | Your application supplies                                       |
+| --------------------------------------------------------- | ------------------------------------------------------------------ | --------------------------------------------------------------- |
+| `retrace`                                                 | Typed recording, checkpoints, replay and wire validation           | Safe model/events, codecs and deterministic reducer             |
+| [`retrace_frontend`](packages/retrace_frontend/README.md) | Lustre capture, durable delivery, replay frame and optional viewer | View, adapters, build artifacts and explicit lifetimes          |
+| [`retrace_server`](packages/retrace_server/README.md)     | Admission, indexing, archive and retrieval                         | Routing, authentication, pool, object store and worker lifetime |
 
 ## Install
 
-Use Gleam 1.16 or later. Declare only the packages your application imports, all at
-the same revision. A Lustre browser or Tauri application typically starts with:
+Use Gleam 1.16 or later and declare only the packages you import, all at the same
+Git revision. A browser or Tauri application typically starts with:
 
 ```toml
 [dependencies]
@@ -25,43 +52,16 @@ retrace = { git = "https://github.com/gleam-dream/retrace.git", ref = "v0.1.0" }
 retrace_frontend = { git = "https://github.com/gleam-dream/retrace.git", ref = "v0.1.0", path = "packages/retrace_frontend" }
 ```
 
-A backend uses `retrace_server` with `path = "packages/retrace_server"` instead of
-the frontend. Replace the tag with a full commit SHA for an immutable pin.
+A backend selects `retrace_server` with `path = "packages/retrace_server"` instead
+of the frontend. A full commit SHA can replace the tag; use the same revision for
+all Retrace packages. The [core-only example](examples/basic/src/usage_core.gleam)
+shows recording without Lustre, storage or a network.
 
-## Quick usage
+## Capture a Lustre session
 
-The portable core records and reconstructs application-native types. JSON appears only
-at the wire boundary.
-
-<!-- prettier-ignore-start -->
-
-<!-- snips: examples/basic/src/usage_core.gleam -->
-```gleam
-import retrace
-
-pub fn main() {
-  let origin = retrace.Origin("git-consumer", "counter-v1")
-  let assert Ok(#(recorder, checkpoint)) = retrace.start(origin, 0)
-  let assert Ok(#(_, entry)) = retrace.record(recorder, 3, elapsed_ms: 20)
-  let assert Ok(player) =
-    retrace.replay(checkpoint, "counter-v1", fn(state, message) {
-      Ok(state + message)
-    })
-  let assert Ok(player) = retrace.step(player, entry)
-  assert retrace.model(player) == 3
-}
-
-```
-
-<!-- prettier-ignore-end -->
-
-Choose replay-safe state and events before encoding. The application owns reducer
-determinism and purity. The [consumer tests](test/retrace_test.gleam) show
-checkpoint resume, typed reducer failure and gap recovery.
-
-For a Lustre application, add `retrace_frontend` and wire capture once:
-
-Import `retrace_frontend/capture` and `retrace_frontend/client`, then start capture:
+The [basic inventory application](examples/basic/README.md) supplies the domain
+codecs, update function and view. Import `retrace_frontend/capture` and
+`retrace_frontend/client`, then connect capture once:
 
 <!-- prettier-ignore-start -->
 
@@ -80,7 +80,8 @@ let assert Ok(#(recording, connect)) =
 
 <!-- prettier-ignore-end -->
 
-Observe accepted changes using the previous model:
+After accepting a domain command, observe it using the **previous** model. Feed
+the returned delivery effect back through the application's capture updates:
 
 <!-- prettier-ignore-start -->
 
@@ -98,27 +99,56 @@ let #(recording, save) =
 
 <!-- prettier-ignore-end -->
 
-Observe each accepted transition with the previous state, mount a replay module in a
-historical entrypoint, and mount `retrace_frontend/viewer` in a separate viewer page.
-Every snippet here is an excerpt of code that compiles and runs; the
-[usage topics](examples/README.md#usage-topics) map each step to its source and the check
-that guards it. The [frontend README](packages/retrace_frontend/README.md) lists the modules.
+For replay, keep the build's codecs, pure reducer and full view together in its
+replay module. Mount that module in a separate historical entrypoint:
 
-## Choose an example
+<!-- prettier-ignore-start -->
 
-| Example                                 | Purpose                                                                                                      |
-| --------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
-| [Basic](examples/basic/README.md)       | Browser capture and replay using library defaults, with no handwritten FFI or native dependencies            |
-| [Advanced](examples/advanced/README.md) | Tauri/native integration, immutable replay artifacts, and custom storage/transport/viewer-source composition |
+<!-- snips: examples/basic/src/retrace_inventory/frame.gleam -->
+```gleam
+import retrace_frontend/replay
+import retrace_inventory/domain
 
-Start with basic. From the repository root:
+pub fn mount() -> fn() -> Nil {
+  let assert Ok(dispose) =
+    replay.mount(domain.replay_module(), domain.build, "#app", 5000)
+  dispose
+}
+
+```
+
+<!-- prettier-ignore-end -->
+
+The returned disposer owns the frame's lifetime. The [viewer example](examples/basic/src/retrace_inventory/viewer.gleam)
+selects a recording and drives the frame. [Usage topics](examples/README.md#usage-topics)
+link each integration step to its source and existing check.
+
+## How it works
+
+```mermaid
+flowchart LR
+  App["Live application"] --> Capture["Frontend capture and typed core"]
+  Capture --> Host["Host collector and server library"]
+  Host --> Store["Database and object store"]
+  Host -->|recording batches| Viewer["Viewer"]
+  Viewer -->|seek and replay| Frame["Inert historical application frame"]
+  Build["Build-specific codecs, reducer and view"] --> Frame
+```
+
+The portable core owns recording and replay rules. The frontend owns local
+delivery and viewer integration. The host owns server routing and borrowed
+resources; importing a package starts no listener, pool or background worker.
+
+## Try the browser example
+
+From the repository root, start the local services:
 
 ```sh
 nix develop
 bash dev/services.sh
 ```
 
-In another terminal inside Nix:
+In a second terminal inside Nix:
 
 ```sh
 cd examples/basic
@@ -126,13 +156,24 @@ npm ci
 npm run dev
 ```
 
-Open **http://127.0.0.1:5193/**, change inventory, and follow **Inspect this recording**.
-Local PostgreSQL and S3-compatible data stays in ignored `.local/`.
+Open **http://127.0.0.1:5193/**, change inventory and choose **Inspect this recording**.
+The local PostgreSQL and S3-compatible data remains in ignored `.local/`.
+Use the [advanced example](examples/advanced/README.md) for Tauri, immutable
+replay artifacts and custom adapters.
 
-## Learn more
+## Operational notes
 
-- [Design](docs/design/design.typ): contexts for [recording](docs/design/recording/design.typ), [archive](docs/design/archive/design.typ) and [replay](docs/design/replay/design.typ), with the [context map](docs/CONTEXT-MAP.md).
-- [Decisions](docs/adr/0001-compose-recording-and-storage.md) and the [coverage map](docs/COVERAGE.md).
-- [Usage topics](examples/README.md#usage-topics): runnable code for each step, with its check.
-- [Server package](packages/retrace_server/README.md) and [attribution](THIRD_PARTY.md).
-- Gate and test commands are listed in [AGENTS.md](AGENTS.md).
+- Project secrets and other unwanted data out before capture. The application
+  owns what is recorded and must supply deterministic reducers and safe codecs.
+- Retain the historical replay artifact and its build identity. Replaying through
+  different code is not a faithful reconstruction of the recorded application.
+- The development collector is unauthenticated and loopback-bound. A deployed
+  host must supply authentication, tenant isolation, consent and retention policy.
+- Monitor persistence and delivery status. A permanently rejected batch can
+  block later batches; the application owns outbox and durable-cursor recovery.
+- Erasure needs host evidence that uncertain uploads can no longer publish.
+  Live tailing, event search and analytics are outside the implemented scope.
+
+See the [design](docs/design/design-layer.pdf) for the recording, archive and replay
+contracts. [AGENTS.md](AGENTS.md) separates core, browser, service and native checks;
+CI timing checks are not a benchmark suite. [THIRD_PARTY.md](THIRD_PARTY.md) records attribution.

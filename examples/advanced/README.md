@@ -69,5 +69,5 @@ replay bundles, source provenance in the manifest, and a refusal to overwrite a 
 build. `local_archive.test.mjs` runs the custom storage, upload and viewer source with an
 in-memory stand-in for browser storage. Replay output goes to
 `viewer/public/artifacts/<build>/`. Build identity, artifact preservation and adapter seams
-are specified in the [replay design](../../docs/design/replay/design.typ), and the
+are specified in the [replay design](../../docs/design/design-layer.pdf), and the
 [usage topics](../README.md#usage-topics) map each topic to its check.

@@ -38,7 +38,7 @@ operations explicitly:
 shows HTTP wiring and worker ownership, and the
 [failure and recovery consumer](../../support/server_checks/src/retrace_server_checks.gleam)
 shows executable storage behavior. The contracts are in the
-[archive design](../../docs/design/archive/design.typ).
+[archive design](../../docs/design/design-layer.pdf).
 
 ## Erasure and uploads with an unknown outcome
 

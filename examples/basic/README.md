@@ -45,6 +45,6 @@ npm --prefix examples/advanced test -- basic-browser-check
 `adoption.test.mjs` runs the application's accepted transitions through capture and
 delivery, then replays the delivered batches and compares the result with the live state.
 Both run in `bash dev/check.sh`. The [usage topics](../README.md#usage-topics) map each
-adoption step to its source and check, and the [replay design](../../docs/design/replay/design.typ)
+adoption step to its source and check, and the [replay design](../../docs/design/design-layer.pdf)
 holds the contracts. The [advanced example](../advanced/README.md) covers replaceable
 adapters and immutable builds.

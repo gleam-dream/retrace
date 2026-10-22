@@ -7,7 +7,7 @@
 
 Both use the same public capture, client, reconstruction and viewer APIs. Start the shared
 local collector with `bash dev/services.sh` from the repository root inside `nix develop`.
-Its design is in the [replay design](../docs/design/replay/design.typ).
+Its design is in the [replay design](../docs/design/design-layer.pdf).
 
 ## Usage topics
 

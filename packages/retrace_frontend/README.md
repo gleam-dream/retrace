@@ -96,5 +96,5 @@ and runs them. Custom storage and upload build from typed cold tasks with `clien
 and custom sources and resolvers return typed tasks to the viewer; the
 [advanced example](../../examples/advanced/README.md) runs both. The
 [usage topics](../../examples/README.md#usage-topics) list every topic with its check.
-Module contracts are in the [design](../../docs/design/recording/design.typ) for capture and
-delivery and the [replay design](../../docs/design/replay/design.typ) for replay and the viewer.
+Module contracts are in the [design](../../docs/design/design-layer.pdf) for capture and
+delivery and the [replay design](../../docs/design/design-layer.pdf) for replay and the viewer.
