@@ -1,0 +1,10 @@
+name = "retrace_server_checks"
+version = "0.1.0"
+target = "erlang"
+[dependencies]
+retrace = { path = "../.." }
+retrace_server = { path = "../../packages/retrace_server" }
+gleam_stdlib = ">= 1.0.0 and < 2.0.0"
+gleam_erlang = ">= 1.0.0 and < 2.0.0"
+pog = "== 4.1.0"
+envoy = ">= 1.2.0 and < 2.0.0"

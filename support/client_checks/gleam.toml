@@ -1,0 +1,7 @@
+name = "retrace_client_checks"
+version = "0.0.0"
+target = "javascript"
+[dependencies]
+retrace = { path = "../.." }
+retrace_frontend = { path = "../../packages/retrace_frontend" }
+gleam_stdlib = ">= 1.0.0 and < 2.0.0"

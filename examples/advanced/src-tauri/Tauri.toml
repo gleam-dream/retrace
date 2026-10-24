@@ -1,0 +1,21 @@
+productName = "Retrace Example"
+version = "0.1.0"
+identifier = "dev.gleamdream.retrace.example"
+[build]
+beforeDevCommand = "npm run dev"
+beforeBuildCommand = "npm run build"
+devUrl = "http://127.0.0.1:5190"
+frontendDist = "../dist"
+[app]
+[[app.windows]]
+label = "main"
+title = "Retrace · Membership"
+width = 1180
+height = 800
+minWidth = 380
+[app.security]
+csp = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src ipc: http://ipc.localhost http://127.0.0.1:4417"
+[bundle]
+active = false
+[bundle.iOS]
+minimumSystemVersion = "15.0"

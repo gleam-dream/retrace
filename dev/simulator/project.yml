@@ -1,0 +1,24 @@
+# Maintained regression: native Simulator capture check, separate from the application.
+name: RetraceSimulatorCheck
+options:
+  deploymentTarget:
+    iOS: "15.0"
+targets:
+  RetraceSimulatorCheck:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - Tests
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.gleamdream.retrace.simulatorcheck
+        GENERATE_INFOPLIST_FILE: YES
+        CODE_SIGNING_ALLOWED: NO
+schemes:
+  RetraceSimulatorCheck:
+    build:
+      targets:
+        RetraceSimulatorCheck: all
+    test:
+      targets:
+        - RetraceSimulatorCheck
