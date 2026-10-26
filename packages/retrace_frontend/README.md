@@ -2,7 +2,7 @@
 
 One JavaScript package for browser and Tauri recording, Lustre reconstruction, and the
 optional inspection UI. It depends on portable `retrace` and Lustre. PostgreSQL and S3
-dependencies stay in `retrace_server`. The package is experimental and not on Hex.
+dependencies stay in `retrace_server`. The package is experimental.
 
 ## Modules
 
@@ -21,13 +21,13 @@ viewer, worker or network request, and a browser-only build needs no Tauri plugi
 
 ## Install
 
-Declare the package from the Git subdirectory, with `retrace` at the same revision:
+Add the frontend and core packages from Hex:
 
-```toml
-[dependencies]
-retrace = { git = "https://github.com/gleam-dream/retrace.git", ref = "v0.1.0" }
-retrace_frontend = { git = "https://github.com/gleam-dream/retrace.git", ref = "v0.1.0", path = "packages/retrace_frontend" }
+```sh
+gleam add retrace retrace_frontend
 ```
+
+Commit `gleam.toml` and `manifest.toml` to retain the resolved versions.
 
 ## Quick usage
 

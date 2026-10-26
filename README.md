@@ -5,8 +5,8 @@ reconstruct a session for inspection. Retrace includes a portable typed core,
 Lustre capture and replay, an optional viewer, and a server package for storage
 and retrieval.
 
-The packages are experimental, distributed from Git and not published to Hex.
-APIs may change before 1.0. Browser and Tauri examples use the same application
+The packages are experimental; APIs may change before 1.0.
+Browser and Tauri examples use the same application
 model; native integration has its own checks and runbook.
 
 ## Capabilities
@@ -43,18 +43,21 @@ library to host, not a managed collection service.
 
 ## Install
 
-Use Gleam 1.16 or later and declare only the packages you import, all at the same
-Git revision. A browser or Tauri application typically starts with:
+Use Gleam 1.16 or later and add only the packages you import from Hex.
+A browser or Tauri application typically starts with:
 
-```toml
-[dependencies]
-retrace = { git = "https://github.com/gleam-dream/retrace.git", ref = "v0.1.0" }
-retrace_frontend = { git = "https://github.com/gleam-dream/retrace.git", ref = "v0.1.0", path = "packages/retrace_frontend" }
+```sh
+gleam add retrace retrace_frontend
 ```
 
-A backend selects `retrace_server` with `path = "packages/retrace_server"` instead
-of the frontend. A full commit SHA can replace the tag; use the same revision for
-all Retrace packages. The [core-only example](examples/basic/src/usage_core.gleam)
+A backend uses the core and server packages:
+
+```sh
+gleam add retrace retrace_server
+```
+
+Commit `gleam.toml` and `manifest.toml` to retain the resolved versions.
+The [core-only example](examples/basic/src/usage_core.gleam)
 shows recording without Lustre, storage or a network.
 
 ## Capture a Lustre session

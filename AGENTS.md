@@ -6,7 +6,7 @@ Read `docs/design/design.typ` and the context designs under `docs/design/`, the 
 - `retrace_frontend` owns JavaScript delivery, Lustre capture/replay and the viewer; applications own safe data and runtime lifetimes.
 - `retrace_server` borrows database and object-store resources; callers own workers.
 - Use only this repository's local development services; never read credential files.
-- Hex publishing and upstream PRs require an explicit request. Releases follow the Git distribution rules in the design.
+- Hex publishing and upstream PRs require an explicit request. Releases follow the distribution rules in the design.
 
 ## Commands
 

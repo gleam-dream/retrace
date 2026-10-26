@@ -1,18 +1,18 @@
 # Retrace server
 
 BEAM admission, session indexing and object archival for Retrace recordings. The package
-is experimental and not on Hex. Importing it starts no HTTP listener, database pool or
+is experimental. Importing it starts no HTTP listener, database pool or
 background process.
 
 ## Install
 
-Declare the package from the Git subdirectory, with `retrace` at the same revision:
+Add the server and core packages from Hex:
 
-```toml
-[dependencies]
-retrace = { git = "https://github.com/gleam-dream/retrace.git", ref = "v0.1.0" }
-retrace_server = { git = "https://github.com/gleam-dream/retrace.git", ref = "v0.1.0", path = "packages/retrace_server" }
+```sh
+gleam add retrace retrace_server
 ```
+
+Commit `gleam.toml` and `manifest.toml` to retain the resolved versions.
 
 ## Quick usage
 
