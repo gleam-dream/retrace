@@ -5,7 +5,7 @@ target = "javascript"
 licences = ["MIT"]
 description = "Composable browser and Tauri capture, delivery, and Lustre session replay"
 [dependencies]
-retrace = { path = "../.." }
+retrace = ">= 0.1.0 and < 0.2.0"
 gleam_stdlib = ">= 1.0.0 and < 2.0.0"
 gleam_json = "== 3.1.0"
 lustre = "== 5.7.1"
