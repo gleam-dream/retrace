@@ -1,5 +1,9 @@
 # Retrace server
 
+[![CI](https://github.com/gleam-dream/retrace/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/gleam-dream/retrace/actions/workflows/ci.yml)
+[![retrace_server on Hex](https://img.shields.io/hexpm/v/retrace_server?label=Hex%3A%20retrace_server)](https://hex.pm/packages/retrace_server)
+[![Gleam](https://img.shields.io/badge/Gleam-FFAFF3?logo=gleam&logoColor=000000)](https://gleam.run/)
+
 BEAM admission, session indexing and object archival for Retrace recordings. The package
 is experimental. Importing it starts no HTTP listener, database pool or
 background process.

@@ -1,5 +1,9 @@
 # Retrace frontend
 
+[![CI](https://github.com/gleam-dream/retrace/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/gleam-dream/retrace/actions/workflows/ci.yml)
+[![retrace_frontend on Hex](https://img.shields.io/hexpm/v/retrace_frontend?label=Hex%3A%20retrace_frontend)](https://hex.pm/packages/retrace_frontend)
+[![Gleam](https://img.shields.io/badge/Gleam-FFAFF3?logo=gleam&logoColor=000000)](https://gleam.run/)
+
 One JavaScript package for browser and Tauri recording, Lustre reconstruction, and the
 optional inspection UI. It depends on portable `retrace` and Lustre. PostgreSQL and S3
 dependencies stay in `retrace_server`. The package is experimental.

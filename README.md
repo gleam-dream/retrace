@@ -1,5 +1,9 @@
 # Retrace
 
+[![CI](https://github.com/gleam-dream/retrace/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/gleam-dream/retrace/actions/workflows/ci.yml)
+[![retrace on Hex](https://img.shields.io/hexpm/v/retrace?label=Hex%3A%20retrace)](https://hex.pm/packages/retrace)
+[![Gleam](https://img.shields.io/badge/Gleam-FFAFF3?logo=gleam&logoColor=000000)](https://gleam.run/)
+
 Record selected application state and messages, deliver them durably, and
 reconstruct a session for inspection. Retrace includes a portable typed core,
 Lustre capture and replay, an optional viewer, and a server package for storage

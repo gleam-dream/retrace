@@ -1,5 +1,9 @@
 # Basic: record and replay a Lustre browser app
 
+[![CI](https://github.com/gleam-dream/retrace/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/gleam-dream/retrace/actions/workflows/ci.yml)
+[![retrace on Hex](https://img.shields.io/hexpm/v/retrace?label=Hex%3A%20retrace)](https://hex.pm/packages/retrace)
+[![Gleam](https://img.shields.io/badge/Gleam-FFAFF3?logo=gleam&logoColor=000000)](https://gleam.run/)
+
 A small inventory app that uses only public Gleam APIs for capture and replay, provided
 IndexedDB persistence and HTTP delivery, and the packaged viewer. It has no handwritten
 FFI and no native dependency.

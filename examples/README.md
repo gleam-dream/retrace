@@ -1,5 +1,9 @@
 # Examples
 
+[![CI](https://github.com/gleam-dream/retrace/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/gleam-dream/retrace/actions/workflows/ci.yml)
+[![retrace on Hex](https://img.shields.io/hexpm/v/retrace?label=Hex%3A%20retrace)](https://hex.pm/packages/retrace)
+[![Gleam](https://img.shields.io/badge/Gleam-FFAFF3?logo=gleam&logoColor=000000)](https://gleam.run/)
+
 | Example                        | Start here when                                       |
 | ------------------------------ | ----------------------------------------------------- |
 | [Basic](basic/README.md)       | Adding recording to a Lustre browser app              |

@@ -1,5 +1,9 @@
 # Collector host
 
+[![CI](https://github.com/gleam-dream/retrace/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/gleam-dream/retrace/actions/workflows/ci.yml)
+[![retrace on Hex](https://img.shields.io/hexpm/v/retrace?label=Hex%3A%20retrace)](https://hex.pm/packages/retrace)
+[![Gleam](https://img.shields.io/badge/Gleam-FFAFF3?logo=gleam&logoColor=000000)](https://gleam.run/)
+
 An unpublished development host for the collector protocol, backed by PostgreSQL
 and an S3-compatible store. It binds to loopback and has no deployment
 authentication or tenant isolation. Applications own hosted deployment policy.

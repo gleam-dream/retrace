@@ -1,5 +1,9 @@
 # Advanced: native capture and replaceable adapters
 
+[![CI](https://github.com/gleam-dream/retrace/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/gleam-dream/retrace/actions/workflows/ci.yml)
+[![retrace on Hex](https://img.shields.io/hexpm/v/retrace?label=Hex%3A%20retrace)](https://hex.pm/packages/retrace)
+[![Gleam](https://img.shields.io/badge/Gleam-FFAFF3?logo=gleam&logoColor=000000)](https://gleam.run/)
+
 A membership app that uses the same public APIs as the [basic example](../basic/README.md)
 and adds Tauri, recorded viewport changes, native command results, immutable replay
 artifacts and an alternate local archive.

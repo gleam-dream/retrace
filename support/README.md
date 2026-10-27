@@ -1,5 +1,9 @@
 # Development support
 
+[![CI](https://github.com/gleam-dream/retrace/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/gleam-dream/retrace/actions/workflows/ci.yml)
+[![retrace on Hex](https://img.shields.io/hexpm/v/retrace?label=Hex%3A%20retrace)](https://hex.pm/packages/retrace)
+[![Gleam](https://img.shields.io/badge/Gleam-FFAFF3?logo=gleam&logoColor=000000)](https://gleam.run/)
+
 Isolated Gleam projects used by repository tooling, not application examples.
 
 - `collector/`: local Mist host, database pool and archive worker. Start with `bash dev/services.sh` from the repository root inside Nix.
