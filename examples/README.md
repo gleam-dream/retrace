@@ -15,8 +15,8 @@ Its design is in the [replay design](../docs/design/design-layer.pdf).
 
 ## Usage topics
 
-Usage is shown as code that compiles and runs. Each topic names its source and the check
-that fails when the library's API moves. The `check.sh` lane is `bash dev/check.sh`; the
+Each compiled, runnable topic names its source and the check that fails when the
+library's API changes. The `check.sh` lane is `bash dev/check.sh`; the
 services lane needs `bash dev/services.sh` and the apps running (see [AGENTS.md](../AGENTS.md)).
 
 | Topic                                                  | Code                                                                                                                                         | Verified by                                                                              | Lane     |
