@@ -7,6 +7,22 @@ revision=${2:-$(git -C "$project_root" rev-parse HEAD)}
 consumer_root=$(mktemp -d "${TMPDIR:-/tmp}/retrace-git-consumer.XXXXXX")
 trap 'rm -rf "$consumer_root"' EXIT
 
+prepare_dependencies() {
+  local dependency_output attempt
+  for attempt in 1 2 3; do
+    if dependency_output=$(gleam deps download 2>&1); then
+      printf '%s\n' "$dependency_output"
+      return 0
+    fi
+    printf '%s\n' "$dependency_output" >&2
+    if [[ "$dependency_output" != *"rate limit for the Hex API has been exceeded"* || "$attempt" = 3 ]]; then
+      return 1
+    fi
+    printf 'Hex metadata rate limit; retrying dependency download in 45 seconds.\n' >&2
+    sleep 45
+  done
+}
+
 for package in core frontend server; do
   directory="$consumer_root/$package"
   mkdir -p "$directory/src"
@@ -87,10 +103,10 @@ pub fn main() {
 }
 GLEAM
 
-(cd "$consumer_root/core" && gleam run --target erlang && gleam run --target javascript)
-(cd "$consumer_root/frontend" && gleam run)
-(cd "$consumer_root/server" && gleam run)
-(cd "$consumer_root/collector" && gleam build --warnings-as-errors && gleam run)
+(cd "$consumer_root/core" && prepare_dependencies && gleam run --target erlang && gleam run --target javascript)
+(cd "$consumer_root/frontend" && prepare_dependencies && gleam run)
+(cd "$consumer_root/server" && prepare_dependencies && gleam run)
+(cd "$consumer_root/collector" && prepare_dependencies && gleam build --warnings-as-errors && gleam run)
 python3 - "$consumer_root/collector/manifest.toml" <<'PY'
 import sys
 import tomllib
