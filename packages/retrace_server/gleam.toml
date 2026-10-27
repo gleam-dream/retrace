@@ -1,5 +1,5 @@
 name = "retrace_server"
-version = "0.1.0"
+version = "0.2.0"
 gleam = ">= 1.16.0"
 target = "erlang"
 licences = ["MIT"]
@@ -21,3 +21,4 @@ type = "github"
 user = "gleam-dream"
 repo = "retrace"
 path = "packages/retrace_server"
+tag-prefix = "retrace_server-"
