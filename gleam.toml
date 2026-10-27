@@ -1,5 +1,5 @@
 name = "retrace"
-version = "0.2.0"
+version = "0.1.0"
 target = "erlang"
 gleam = ">= 1.16.0"
 licences = ["MIT"]
@@ -16,3 +16,4 @@ gleeunit = ">= 1.0.0 and < 2.0.0"
 type = "github"
 user = "gleam-dream"
 repo = "retrace"
+tag-prefix = "retrace-"
