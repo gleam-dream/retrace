@@ -68,7 +68,37 @@ pub fn main() {
 }
 GLEAM
 
+mkdir -p "$consumer_root/collector/src"
+cat > "$consumer_root/collector/gleam.toml" <<TOML
+name = "retrace_distribution_check"
+version = "0.1.0"
+target = "erlang"
+[dependencies]
+retrace = ">= 0.1.0 and < 0.2.0"
+retrace_server = ">= 0.1.0 and < 0.2.0"
+retrace_collector = { git = "$repository", ref = "$revision", path = "support/collector" }
+TOML
+cat > "$consumer_root/collector/src/retrace_distribution_check.gleam" <<'GLEAM'
+import retrace_collector
+
+pub fn main() {
+  let _start: fn() -> Nil = retrace_collector.main
+  Nil
+}
+GLEAM
+
 (cd "$consumer_root/core" && gleam run --target erlang && gleam run --target javascript)
 (cd "$consumer_root/frontend" && gleam run)
 (cd "$consumer_root/server" && gleam run)
+(cd "$consumer_root/collector" && gleam build --warnings-as-errors && gleam run)
+python3 - "$consumer_root/collector/manifest.toml" <<'PY'
+import sys
+import tomllib
+
+with open(sys.argv[1], "rb") as source:
+    packages = {package["name"]: package for package in tomllib.load(source)["packages"]}
+for name in ("retrace", "retrace_server"):
+    assert packages[name]["source"] == "hex", f"Git collector replaced Hex {name}"
+print("Git collector retains both published Hex parents")
+PY
 printf 'Git consumers passed: %s at %s\n' "$repository" "$revision"

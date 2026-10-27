@@ -56,6 +56,9 @@ A backend uses the core and server packages:
 gleam add retrace retrace_server
 ```
 
+The unpublished [development collector](support/collector/README.md) uses Git+path
+alongside these Hex packages.
+
 Commit `gleam.toml` and `manifest.toml` to retain the resolved versions.
 The [core-only example](examples/basic/src/usage_core.gleam)
 shows recording without Lustre, storage or a network.

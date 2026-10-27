@@ -29,3 +29,5 @@ jobs:
         run: nix run --no-update-lock-file .#snips -- --check --commands deny README.md packages/retrace_frontend/README.md
       - name: Application and example tests
         run: nix develop --no-update-lock-file --command bash dev/check.sh
+      - name: Independent Git consumers with published Hex parents
+        run: nix develop --no-update-lock-file --command bash dev/git-consumer-check.sh
