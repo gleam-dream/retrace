@@ -34,3 +34,8 @@ services lane needs `bash dev/services.sh` and the apps running (see [AGENTS.md]
 | Simulator capture and replay                           | [`dev/simulator`](../dev/simulator/README.md)                                                                                                                                  | the Simulator runbook                                                                                                                 | device   |
 
 The release lane runs against the committed revision: `bash dev/git-consumer-check.sh`.
+
+The protected browser lane also needs the advanced example's test dependencies
+and Chromium on a fresh checkout. Run `npm --prefix examples/advanced ci` and
+`npm --prefix examples/advanced exec playwright install chromium` before its
+Playwright command.

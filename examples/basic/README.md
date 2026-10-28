@@ -124,6 +124,8 @@ For a production-bundle browser check without the collector, run from the root
 after `npm --prefix examples/basic run build`:
 
 ```sh
+npm --prefix examples/advanced ci
+npm --prefix examples/advanced exec playwright install chromium
 node examples/advanced/node_modules/@playwright/test/cli.js test --config dev/protected-playwright.config.mjs
 ```
 

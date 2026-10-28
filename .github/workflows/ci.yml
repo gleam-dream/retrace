@@ -30,4 +30,7 @@ jobs:
       - name: Application and example tests
         run: nix develop --no-update-lock-file --command bash dev/check.sh
       - name: Independent Git consumers with published Hex parents
-        run: nix develop --no-update-lock-file --command bash dev/git-consumer-check.sh
+        # Gleam fetches branch refs; advertise the detached PR merge commit too.
+        run: |
+          git branch ci-consumer HEAD
+          nix develop --no-update-lock-file --command bash dev/git-consumer-check.sh
