@@ -32,5 +32,5 @@ jobs:
       - name: Independent Git consumers with published Hex parents
         # Gleam fetches branch refs; advertise the detached PR merge commit too.
         run: |
-          git branch ci-consumer HEAD
+          git update-ref refs/heads/ci-consumer HEAD
           nix develop --no-update-lock-file --command bash dev/git-consumer-check.sh
