@@ -4,6 +4,10 @@ import * as capture from "../build/dev/javascript/retrace_frontend/retrace_front
 import { Config } from "../build/dev/javascript/retrace_frontend/retrace_frontend/client.mjs";
 import { Event } from "../build/dev/javascript/retrace/retrace/wire.mjs";
 import { perform } from "../build/dev/javascript/lustre/lustre/effect.mjs";
+import {
+  Result$Ok,
+  Result$Error,
+} from "../build/dev/javascript/retrace_frontend/gleam.mjs";
 const until = async (f) => {
   for (let n = 0; n < 100; n++) {
     if (f()) return;
@@ -22,6 +26,49 @@ const run = (effect, dispatch) =>
     () => {},
     () => {},
   );
+test("failed projection never reaches codecs or delivery and stops capture without copying its error", () => {
+  let [state] = capture.start_with_clock(
+    capture.session("opaque", "build", "contract", "web"),
+    new Config("local", "projection", 10, 10000),
+    async () => {
+      throw Error("must not open");
+    },
+    async () => {
+      throw Error("must not upload");
+    },
+    () => {
+      throw Error("must not read clock");
+    },
+  )[0];
+  const encode = () => {
+    throw Error("must not encode");
+  };
+  let effect;
+  [state, effect] = capture.observe_projected(
+    state,
+    Result$Error("PRIVATE-PROJECTION-SENTINEL"),
+    encode,
+    encode,
+  );
+  run(effect, () => {
+    throw Error("must not dispatch");
+  });
+  assert.equal(capture.info(state).captured, 0);
+  assert.equal(
+    capture.info(state).failure[0],
+    "Safe projection failed. Start a new session.",
+  );
+  [state, effect] = capture.observe_projected(
+    state,
+    Result$Ok([{}, {}]),
+    encode,
+    encode,
+  );
+  run(effect, () => {
+    throw Error("must not dispatch");
+  });
+  assert.equal(capture.info(state).captured, 0);
+});
 test("capture persists typed observations in order, keeps status out of history, and stops on clock failure", async () => {
   let now = 5,
     state;

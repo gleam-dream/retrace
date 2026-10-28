@@ -18,6 +18,7 @@ model; native integration has its own checks and runbook.
 - Record application-native events with typed checkpoints and sequence checks.
 - Encode and validate versioned recording batches at the wire boundary.
 - Capture accepted Lustre transitions using caller-supplied safe projections.
+- Replay protected observations with recorded decisions and the live application's view.
 - Queue delivery through browser persistence or explicit storage/transport adapters.
 - Reconstruct a full historical application view in an inert replay frame.
 - Inspect recordings through the optional viewer and replaceable data sources.
@@ -36,6 +37,21 @@ model; native integration has its own checks and runbook.
 Retrace records explicitly selected state and messages. It does not record pixels,
 arbitrary DOM changes, native screens or OS dialogs. The server package is a
 library to host, not a managed collection service.
+
+## Replay strategies
+
+Two replay strategies use the same public recording and replay APIs:
+
+| Strategy               | Record                                                     | Replay                                               |
+| ---------------------- | ---------------------------------------------------------- | ---------------------------------------------------- |
+| Deterministic          | Safe messages, including external results                  | Run a shared pure reducer; render the shared view    |
+| Protected observations | Safe presence and accepted decisions after each transition | Adopt validated observations; render the shared view |
+
+The [basic protected example](examples/basic/README.md#protected-observation-replay)
+demonstrates why validating replacement text can change the result. Applications own
+privacy classification and safe projection before persistence or upload. Annotations
+and redaction in the viewer cannot establish privacy. Excluded text and unrecorded
+decisions cannot be recovered. Both strategies require the recording's exact build.
 
 ## Packages
 

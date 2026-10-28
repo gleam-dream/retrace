@@ -17,6 +17,12 @@
     ],
   )
   #section(title: "Replay modules and frames", lead: "An optional companion reconstructs bounded ranges using application-native types and a shared inert view.", body: [
+    #behavior(title: "Protected observations preserve recorded decisions", level: "boundary", area: "Replay composition")[
+      #given[a protected recording whose application codecs validate its observations]
+      #when[the range is loaded or sought]
+      #then[the shared application view receives the recorded decisions without validating placeholder text or invoking live commands]
+      #then[malformed observations refuse the range without exposing partially reconstructed snapshots]
+    ]
     #behavior(title: "Application adapters preserve range identity", level: "boundary", area: "Replay composition")[
       #given[an application adapter, expected build and a bounded recorded range]
       #when[the range is reconstructed from its first checkpoint]
@@ -37,6 +43,9 @@
     #points(
       [Replay owns no stored entity. #ctx("recording") owns the session, batch and checkpoint, #ctx("archive") owns the batch receipt, and the application pipeline owns the artifact manifest.],
       [A #term("term-replay-module") is typed by model, message and error. The application supplies its codecs, deterministic reducer, equality, full view, viewport projection and event labels, and the live application and the replay entrypoint share the same view.],
+      [Two strategies use this unchanged contract. Deterministic replay shares a pure reducer and records external results as messages. Protected observation replay records accepted decisions and adopts each validated observation as the next replay state. Both feed the same view used live; neither executes the live effect interpreter.],
+      [Replacing private text before rerunning business validation can change a decision: a one-character input fails a minimum-length rule while a longer protected placeholder passes it. An observation instead records the original invalid decision and field presence. Its decoder validates the observation schema and invariants, never the placeholder as business input.],
+      [The application owns the observation vocabulary, presence policy, codecs, consistency rules and conversion into the shared view's input. Retrace supplies capture, range validation, inert mounting and exact build matching. Excluded text, its geometry, unrecorded decisions and external state cannot be reconstructed. Function types and inert DOM do not prevent effects hidden inside application callbacks; artifacts must omit live capabilities and use the host's isolation policy.],
       [Reconstruction validates the complete supplied range before returning snapshots. A range may begin at a nonzero checkpoint, and sequence numbers stay absolute. Every batch checkpoint is verified with the application's equality function.],
       [Typed reducer errors surface as invalid-replay failures, and decoding or compatibility failures surface as invalid-range failures. A failed call holds no mutable state, so the caller retries with corrected input.],
       [The #term("term-replay-frame") renders the application's full view inertly and ignores its messages. Cleanup removes the frame subscription and the node it owns, is idempotent, and does not rely on the Lustre single-page shutdown branch. One frame runtime serves one iframe document.],
@@ -144,6 +153,7 @@
     ]
     #points(
       [Exactly two applications are maintained. The basic inventory application uses provided browser storage, HTTP transport, the collector reader and the default viewer, with no handwritten FFI and no native dependency. The advanced membership application adds Tauri, recorded viewport changes, native command results, immutable replay artifacts and an optional custom local archive. #adr(6)],
+      [The basic application's protected topic uses one shared parametric view for private live labels and presence-only observations. Its live-only interpreter fetches a static HTTP result without sending the label; its historical entrypoint imports only the observation schema, shared view and replay runtime. Unit checks inspect saved and uploaded bytes. A separate production-bundle browser check exercises real IndexedDB, seeking, malformed replacement and inert synthetic input with traps for HTTP, storage writes and native commands.],
       [Each application owns its model, codecs, pure reducer, full view and replay entrypoint, and both use the same public capture, client, reconstruction and viewer APIs. The advanced application changes adapters and forks no shared validation. The shared collector and the backend fault consumer belong to development tooling.],
       [Each application runs its live entrypoint, viewer and replay frame as separate entrypoints with separate local endpoints. The viewer owns search, artifact loading, timing and event navigation, and the live application owns capture and effect execution. Capture diagnostics stay a separate live-only panel.],
       [The examples send one event and its checkpoint per batch so each transition is easy to inspect. The advanced example configures a delivery queue of 2,000 batches and 8 MiB and a viewer budget of 2,000 entries, and the basic example keeps the default viewer budget of 5,000 entries.],
