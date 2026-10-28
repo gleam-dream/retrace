@@ -151,6 +151,27 @@ pub fn observe(
   }
 }
 
+/// Observe an application's fallible safe projection of an accepted transition.
+/// The pair contains the safe state BEFORE the transition and its safe event.
+/// Only successful projections reach the codecs. Failure stops capture without
+/// recording the application's error, which may itself contain private values.
+/// This does not classify data or prove the projection/codecs safe or pure.
+pub fn observe_projected(
+  state: State,
+  projection: Result(#(model, message), error),
+  encode_model: fn(model) -> String,
+  encode_message: fn(message) -> wire.Event,
+) -> #(State, Effect(Message)) {
+  case projection {
+    Ok(#(before, message)) ->
+      observe(state, before, message, encode_model, encode_message)
+    Error(_) -> #(
+      failed(state, "Safe projection failed. Start a new session."),
+      effect.none(),
+    )
+  }
+}
+
 pub fn retry(state: State) -> Effect(Message) {
   effect.from(fn(_) {
     case state.client {

@@ -36,6 +36,23 @@ function decode(value) {
   return result[0];
 }
 const run = (values) => load(app, toList(values.map(decode)), "release", 5000);
+test("deterministic replay consumes the recorded external result through the shared reducer", () => {
+  const external = structuredClone(batch);
+  external.entries = [
+    { sequence: 1, elapsed_ms: 100, kind: "RequestDevice", payload: "" },
+    {
+      sequence: 2,
+      elapsed_ms: 200,
+      kind: "DeviceReceived",
+      payload: "Recorded browser result",
+    },
+  ];
+  const result = run([external]);
+  assert.ok(result.isOk());
+  const snapshots = result[0].toArray();
+  assert.equal(snapshots[1].model.device, "Requesting device information");
+  assert.equal(snapshots[2].model.device, "Recorded browser result");
+});
 test("valid range retains its initial state, timestamp gap and unchanged transition", () => {
   const result = run([batch]);
   assert.equal(result.isOk(), true);

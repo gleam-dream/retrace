@@ -53,6 +53,33 @@ let #(recording, save) =
 
 <!-- prettier-ignore-end -->
 
+For a fallible safe projection, use `capture.observe_projected`. Its successful
+pair contains the safe **previous** state and the safe event. Projection failure
+stops capture without calling codecs or copying the application's error into
+diagnostics; the live application still owns its transition and effects.
+
+<!-- prettier-ignore-start -->
+
+<!-- snips: ../../examples/basic/src/protected_example.gleam#protected-capture -->
+```gleam
+let #(recording, save) =
+  capture.observe_projected(
+    model.recording,
+    live.transition(model.application, after),
+    observation.encode,
+    observation.encode_event,
+  )
+```
+
+<!-- prettier-ignore-end -->
+
+The [protected example](../../examples/basic/README.md#protected-observation-replay)
+records field presence and accepted decisions, then adopts the observations through
+the existing `ReplayModule`. It shares the live view and never validates protected
+placeholder text. `observe` and the wire and replay contracts remain unchanged.
+Neither helper infers privacy: classification, projection, codecs and callback
+purity remain application responsibilities.
+
 Mount a replay module in the historical entrypoint and retain its disposer:
 
 <!-- prettier-ignore-start -->

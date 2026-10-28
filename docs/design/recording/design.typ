@@ -170,6 +170,12 @@
     ]
   ])
   #section(title: "Capture coordination", lead: "The capture module records accepted transitions without taking over application update or effects.", body: [
+    #behavior(title: "Failed safe projection stops capture", level: "boundary", area: "Capture composition")[
+      #given[an application projects an accepted transition before recording]
+      #when[the projection fails]
+      #then[capture stops visibly without encoding, persisting or uploading that transition]
+      #then[private projection errors do not enter capture diagnostics and the live transition remains application-owned]
+    ]
     #behavior(title: "Capture coordination preserves application ownership", level: "boundary", area: "Capture composition")[
       #given[an initialized capture state and an application-approved transition]
       #when[the application observes that transition with its safe state and event codecs]
@@ -185,6 +191,8 @@
       [The caller owns the client lifetime and stops capture before discarding its state. Retry repairs delivery only and never repairs a failed recording. A fresh session starts after a capture failure.],
       [Capture information reports the session, captured count, locally saved count, delivery status and optional failure. A per-session monotonic clock and random session ID are supplied by default, and a clock can be injected for deterministic consumers.],
       [The results of effects, such as a native reply, are recorded as ordinary messages. Time and randomness values that affect state are recorded in events. Only transitions that cannot affect the replay model may be omitted, because an omitted meaningful transition makes later checkpoints inconsistent.],
+      [The opt-in `observe_projected` helper accepts the application's fallible projection of a safe pre-transition checkpoint and safe event. Only successful projections reach the encoders and the ordinary capture path. Projection failure preserves the cursor, stops capture and reports a fixed diagnostic without retaining the application's error. Existing `observe` callers retain their contract.],
+      [Privacy classification and projection belong to the application. Protected fields may retain presence without text, while observations retain the accepted validation, outcomes, loading, locking and presentation decisions needed by the shared view. An annotation cannot establish privacy. No raw recording copy, private sidecar or viewer-only redaction is created.],
     )
   ])
 ]
