@@ -24,13 +24,21 @@ receive_response(Socket, Acc) ->
             end
     end.
 
+%% 1xx, 204 and 304 responses carry no body, and mist sends them without
+%% Content-Length on a kept-alive connection, so the headers complete them.
 complete(Acc) ->
     case binary:split(Acc, <<"\r\n\r\n">>) of
-        [Head, Body] ->
-            Lower = string:lowercase(Head),
-            case re:run(Lower, <<"content-length: *([0-9]+)">>, [{capture, all_but_first, binary}]) of
-                {match, [Length]} -> byte_size(Body) >= binary_to_integer(Length);
-                nomatch -> false
+        [<<"HTTP/1.1 ", Code:3/binary, _/binary>> = Head, Body] ->
+            case Code of
+                <<"1", _/binary>> -> true;
+                <<"204">> -> true;
+                <<"304">> -> true;
+                _ ->
+                    Lower = string:lowercase(Head),
+                    case re:run(Lower, <<"content-length: *([0-9]+)">>, [{capture, all_but_first, binary}]) of
+                        {match, [Length]} -> byte_size(Body) >= binary_to_integer(Length);
+                        nomatch -> false
+                    end
             end;
         _ -> false
     end.
