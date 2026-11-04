@@ -46,5 +46,16 @@ A batch submission must declare its length. A request carrying any
 `Transfer-Encoding` or no `Content-Length` is refused with `411` before its body
 is read, because mist buffers each transfer chunk whole; the packaged adapters
 always send `Content-Length`. A declared length over `wire.max_bytes` (1 MiB) is
-refused with `413` before the body is read, and the body is streamed and cut off
-with `413` one byte past the limit.
+refused with `413` before the body is read. As a second defence, the body is
+streamed and refused with `413` if more bytes arrive than the limit allows.
+
+## Known limitations
+
+- mist 6.0.3 accepts HTTP/2 prior-knowledge connections on the same port and
+  buffers their DATA frames before the collector's guard can refuse the stream,
+  so a local process can consume memory before any origin or token check.
+  Browsers cannot open such a connection. Closing it needs an upstream mist
+  option to disable HTTP/2.
+- mist keeps only the last value of a repeated request header, so the collector
+  cannot detect several `Origin` or `Host` headers and judges the last one. A
+  browser sends one `Origin`, which it does not let page scripts set.

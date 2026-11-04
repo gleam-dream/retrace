@@ -123,3 +123,31 @@ pub fn preflight_needs_no_token_test() {
     ])
   assert reply.status == 204
 }
+
+fn with_host(port: Int, host: String) -> Int {
+  collector_http.send(port, [
+    <<
+      "GET /health HTTP/1.1\r\nhost: ",
+      host:utf8,
+      "\r\nconnection: close\r\n\r\n",
+    >>,
+  ]).status
+}
+
+pub fn host_must_be_a_whole_loopback_authority_test() {
+  let port = open()
+  assert with_host(port, "[::1].evil.example") == 403
+  assert with_host(port, "localhost:4417:evil") == 403
+  assert with_host(port, "127.0.0.1.evil.example:4417") == 403
+  assert with_host(port, "localhost:") == 403
+  assert with_host(port, "localhost:44a7") == 403
+  assert with_host(port, "[::1]:4417x") == 403
+}
+
+pub fn loopback_authorities_are_accepted_test() {
+  let port = open()
+  assert with_host(port, "LocalHost") == 200
+  assert with_host(port, "127.0.0.1:4417") == 200
+  assert with_host(port, "[::1]:4417") == 200
+  assert with_host(port, "[::1]") == 200
+}

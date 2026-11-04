@@ -142,17 +142,25 @@ fn loopback_host(req: Request(mist.Connection)) -> Bool {
   case request.get_header(req, "host") {
     Error(Nil) -> False
     Ok(host) -> {
-      let name = case string.split_once(string.lowercase(host), "]") {
-        Ok(#(bracketed, _port)) -> bracketed <> "]"
-        Error(Nil) ->
-          string.split_once(host, ":")
-          |> result.map(fn(pair) { pair.0 })
-          |> result.unwrap(host)
-          |> string.lowercase
-      }
-      list.contains(["127.0.0.1", "localhost", "[::1]"], name)
+      let host = string.lowercase(host)
+      list.any(["127.0.0.1", "localhost", "[::1]"], fn(name) {
+        case string.starts_with(host, name) {
+          False -> False
+          True ->
+            case string.drop_start(host, string.length(name)) {
+              "" -> True
+              ":" <> port ->
+                port != "" && string.to_graphemes(port) |> list.all(is_digit)
+              _ -> False
+            }
+        }
+      })
     }
   }
+}
+
+fn is_digit(grapheme: String) -> Bool {
+  string.contains("0123456789", grapheme)
 }
 
 fn authorized(token: Option(String), req: Request(mist.Connection)) -> Bool {
