@@ -11,7 +11,8 @@ The design states their behavior as boundary rules in the archive context, and t
 client and viewer depend on exactly these operations. A collector may add operations. A
 change to the behavior of these three, or their removal, is a breaking change.
 
-The development collector stays unauthenticated and loopback-only. Authentication, tenant
+The development collector stays loopback-only. [ADR 0021](0021-restrict-the-development-collector-to-allowed-origins.md#adr-0021)
+restricts it to allowed browser origins and adds an optional bearer token. Authentication, tenant
 isolation, rate limiting and retention for a hosted collector stay with the separate
 hosted-deployment ruling.
 
@@ -33,9 +34,10 @@ viewer free to drift apart from the development collector.
 The archive context holds the rules. `dev/backend-check.py` exercises the collector against
 real storage for acknowledgement, concurrent identical submissions, conflict and order
 refusal, invalid-batch refusal, listing for one user reference and ordered paging after
-archival. `support/server_checks` exercises the 128-batch page at the server level. Four
-rules have no collector-level check yet: the oversized refusal, the listing bound and order,
-the empty pages and the storage-failure reporting. They are stated from the collector and
+archival. `support/server_checks` exercises the 128-batch page at the server level.
+`support/collector/test` checks the oversized refusal and the refusal of bodies without a declared length. Three
+rules have no collector-level check yet: the listing bound and order, the empty pages and the
+storage-failure reporting. They are stated from the collector and
 server code. A collector that serves a different shape fails the packaged viewer at its first
 request.
 

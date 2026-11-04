@@ -12,7 +12,7 @@
   ])
   #pending-ledger(
     pending-entry(title: "Hosted deployment policy", kind: "ruling", since: "2026-10-10")[
-      Authentication, tenant isolation, rate limiting, consent and retention schedules need an owner decision before a hosted deployment. The collector is loopback-only and unauthenticated.
+      Authentication, tenant isolation, rate limiting, consent and retention schedules need an owner decision before a hosted deployment. The development collector is loopback-only, admits browsers from an origin allow-list and is authenticated only by an optional bearer token.
     ],
     pending-entry(title: "Replay beyond a bounded range", kind: "ruling", since: "2026-10-10")[
       Live tailing, lazy seeking from checkpoints, event-payload search and analytics are not designed. The viewer retains a bounded range of snapshots.
@@ -73,7 +73,7 @@
       [Native builds, browser tests, database tests and remote-cloud tests are distinct evidence classes, and a compile is no native deployment test. Browser checks keep screenshots in ignored output and create disposable sessions in the development backend. A real PostgreSQL check signs local S3 requests, and an isolated database check injects archive failures and recovery.],
       [Simulator evidence is separate from browser evidence. The retained Simulator scenario drives the embedded Tauri build with native UI input, uploads through the native queue to the loopback collector, and replays that stored session in a desktop browser. It supports no claim about physical devices, background delivery or power-loss durability.],
       [A native desktop smoke check drives the real WebView, native store plugin, Rust command and upload with supplied render frames, because a hidden automation WebView pauses animation frames. It is excluded from ordinary builds and says nothing about mobile lifecycle or signing.],
-      [A physical phone reaches a collector only through an endpoint compiled into its frontend, and the loopback default points at the phone itself. The mobile network policy and content security policy must permit that endpoint, and any bridge to the development collector needs an explicit access policy because the collector has no authentication. The session ID found and replayed on a desktop browser is the only confirmation that a phone uploaded a session.],
+      [A physical phone reaches a collector only through an endpoint compiled into its frontend, and the loopback default points at the phone itself. The mobile network policy and content security policy must permit that endpoint, and any bridge to the development collector needs an explicit access policy because the collector is open to local callers unless a bearer token is configured. The session ID found and replayed on a desktop browser is the only confirmation that a phone uploaded a session.],
       [A Hex release comes from a checked source commit with immutable release tags. Before publication, production dependencies use Hex version requirements; published archives are then verified through independent consumers. Git source consumer checks remain separate evidence and do not establish Hex installation. #adr(20)],
       [Evidence limits stay explicit. The local object store test is no cloud deployment or power-failure test, and a successful build or installation establishes no phone upload. #adr(12)],
     )

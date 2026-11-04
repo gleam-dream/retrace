@@ -252,6 +252,7 @@
       #given[a submission that is larger than one MiB, or whose entries are not contiguous or exceed the entry limit]
       #when[a caller submits it]
       #then[an oversized submission is refused as oversized before it is decoded]
+      #then[the development collector refuses a submission without a declared length, including a chunked one, before reading its body]
       #then[any other invalid submission is refused as invalid]
       #then[no stored state changes]
     ]
@@ -284,7 +285,7 @@
     ]
     #points(
       [The three operations are the contract between the packaged client, the viewer and any collector that serves them. A collector may add operations, and it may not change or remove these. #adr(18)],
-      [A collector authorizes callers and scopes tenants itself, because the server package does not. The development collector does neither, binds to loopback by default and stays outside the hosted-deployment policy.],
+      [A collector authorizes callers and scopes tenants itself, because the server package does not. The development collector scopes no tenants, binds to loopback, admits browsers only from an origin allow-list, accepts an optional bearer token and stays outside the hosted-deployment policy. #adr(21)],
       [Refusals reach callers as distinguishable categories: conflicting, invalid, oversized, erased session and unavailable storage. The client's handling of each category belongs to the separate client retry and rejected-batch ruling.],
     )
   ])
@@ -293,7 +294,7 @@
       [The server package borrows a database pool and object-store functions. It starts no HTTP listener, pool or background process on import, and storage functions report explicit read and write failures.],
       [The package supplies an S3-compatible adapter that takes credentials, bucket and region, and a local directory adapter. A caller may supply its own #term("term-object-store"), so the S3 adapter works with HTTPS and any region and the directory adapter keeps admission unchanged.],
       [The schema helper creates the initial schema and its archive tables, and the host chooses when to run it before upgraded workers start. It is not a versioned migration system. The schema helper refuses a database that holds tombstones from before write attempts and changes nothing. The runtime role needs select, insert, update and delete privileges on those tables and usage on the attempt sequence.],
-      [The development #term("term-collector") owns the pool and the periodic archive worker. It serves the collector protocol above and adds local routes for one archive attempt and health. It is unauthenticated, binds to loopback by default, and stores local data in ignored directories.],
+      [The development #term("term-collector") owns the pool and the periodic archive worker. It serves the collector protocol above and adds local routes for one archive attempt and health. It binds to loopback, refuses non-loopback host names and origins outside its allow-list, requires a bearer token on every route when one is configured, and stores local data in ignored directories. Without a token it logs a warning and stays open to allowed origins and local processes. #adr(21)],
     )
   ])
 ]
