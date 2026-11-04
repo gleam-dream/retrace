@@ -11,7 +11,8 @@ The design states their behavior as boundary rules in the archive context, and t
 client and viewer depend on exactly these operations. A collector may add operations. A
 change to the behavior of these three, or their removal, is a breaking change.
 
-The development collector stays unauthenticated and loopback-only. Authentication, tenant
+The development collector stays loopback-only. [ADR 0021](0021-restrict-the-development-collector-to-allowed-origins.md#adr-0021)
+restricts it to allowed browser origins and adds an optional bearer token. Authentication, tenant
 isolation, rate limiting and retention for a hosted collector stay with the separate
 hosted-deployment ruling.
 

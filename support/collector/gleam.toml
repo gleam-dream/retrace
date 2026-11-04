@@ -13,3 +13,7 @@ envoy = ">= 1.0.0 and < 2.0.0"
 mist = "== 6.0.3"
 pog = "== 4.1.0"
 bucket = "== 1.4.0"
+gleam_crypto = ">= 1.6.0 and < 2.0.0"
+
+[dev_dependencies]
+gleeunit = ">= 1.11.0 and < 2.0.0"
