@@ -12,7 +12,7 @@
     "viewer": "npm --prefix viewer run dev"
   },
   "dependencies": {
-    "@tauri-apps/api": "^2.0.0",
+    "@tauri-apps/api": "^2.12.4",
     "@tauri-apps/plugin-store": "^2.0.0"
   },
   "devDependencies": {
