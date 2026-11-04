@@ -16,7 +16,7 @@ packages = [
   { name = "lustre", version = "5.7.1", build_tools = ["gleam"], requirements = ["exception", "gleam_erlang", "gleam_json", "gleam_otp", "gleam_stdlib", "houdini"], otp_app = "lustre", source = "hex", outer_checksum = "663A2D1A3458914CA537A42AC07E601DD3FD85415EBDAF4717F2DFF6E86F90F9" },
   { name = "retrace", version = "0.1.0", build_tools = ["gleam"], requirements = ["gleam_json", "gleam_stdlib"], source = "local", path = "../../.." },
   { name = "retrace_example", version = "0.1.0", build_tools = ["gleam"], requirements = ["gleam_json", "gleam_stdlib", "lustre", "retrace", "retrace_frontend"], source = "local", path = ".." },
-  { name = "retrace_frontend", version = "0.1.0", build_tools = ["gleam"], requirements = ["gleam_json", "gleam_stdlib", "lustre", "retrace"], source = "local", path = "../../../packages/retrace_frontend" },
+  { name = "retrace_frontend", version = "0.1.1", build_tools = ["gleam"], requirements = ["gleam_json", "gleam_stdlib", "lustre", "retrace"], source = "local", path = "../../../packages/retrace_frontend" },
 ]
 
 [requirements]
