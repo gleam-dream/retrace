@@ -42,23 +42,9 @@ same-origin proxy that adds the header in front of the collector.
 
 ## Body limit
 
-A batch body larger than `wire.max_bytes` (1 MiB) is refused with `413`. A
-declared `Content-Length` over the limit is refused before the body is read, and
-a chunked body is streamed and refused once it passes the limit. mist still
-buffers one transfer chunk whole before handing it over, so a single oversized
-chunk is held in memory until it arrives.
-
-From the repository's Nix shell, run `bash dev/services.sh` to start its local
-services and collector. Run `python3 dev/backend-check.py` to check ingestion and
-archive readback against those services.
-
-An external development host can use the collector through Git+path alongside
-the published packages. Replace `RETRACE_COMMIT_SHA` with a verified commit; the
-collector's parent dependencies resolve from Hex.
-
-```toml
-[dependencies]
-retrace = ">= 0.1.0 and < 0.2.0"
-retrace_server = ">= 0.1.0 and < 0.2.0"
-retrace_collector = { git = "https://github.com/gleam-dream/retrace.git", ref = "RETRACE_COMMIT_SHA", path = "support/collector" }
-```
+A batch submission must declare its length. A request carrying any
+`Transfer-Encoding` or no `Content-Length` is refused with `411` before its body
+is read, because mist buffers each transfer chunk whole; the packaged adapters
+always send `Content-Length`. A declared length over `wire.max_bytes` (1 MiB) is
+refused with `413` before the body is read, and the body is streamed and cut off
+with `413` one byte past the limit.

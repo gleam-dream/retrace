@@ -285,21 +285,25 @@ fn query(req: Request(mist.Connection), key: String) -> String {
 }
 
 type BodyError {
+  LengthRequired
   TooLarge
   Unreadable
 }
 
-// mist.read_body checks only Content-Length, and reads a chunked body whole
-// before any limit applies. Streaming stops one byte past the limit instead.
+// mist buffers each transfer chunk whole, so a framed body is refused before
+// any of it is read; every packaged adapter sends Content-Length. Streaming
+// still stops one byte past the limit if the declared length is wrong.
 fn read_bounded_body(
   req: Request(mist.Connection),
   limit: Int,
 ) -> Result(BitArray, BodyError) {
+  let framed = result.is_ok(request.get_header(req, "transfer-encoding"))
   let declared =
     request.get_header(req, "content-length") |> result.try(int.parse)
-  case declared {
-    Ok(length) if length > limit -> Error(TooLarge)
-    _ ->
+  case framed, declared {
+    True, _ | False, Error(Nil) -> Error(LengthRequired)
+    False, Ok(length) if length > limit -> Error(TooLarge)
+    False, Ok(_) ->
       case mist.stream(req) {
         Error(_) -> Error(Unreadable)
         Ok(consume) -> read_chunks(consume, limit, <<>>)
@@ -338,6 +342,14 @@ fn route(
           reply(
             413,
             json.object([#("error", json.string("Batch body exceeds limit"))]),
+          )
+          |> response.set_header("connection", "close")
+        Error(LengthRequired) ->
+          reply(
+            411,
+            json.object([
+              #("error", json.string("Batch body needs a Content-Length")),
+            ]),
           )
           |> response.set_header("connection", "close")
         Error(Unreadable) ->

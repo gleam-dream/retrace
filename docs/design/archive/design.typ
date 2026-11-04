@@ -251,7 +251,8 @@
     #behavior(title: "Invalid and oversized submissions are refused", level: "boundary", area: "Collector protocol")[
       #given[a submission that is larger than one MiB, or whose entries are not contiguous or exceed the entry limit]
       #when[a caller submits it]
-      #then[an oversized submission is refused as oversized before it is decoded, whether its length is declared or its body is chunked]
+      #then[an oversized submission is refused as oversized before it is decoded]
+      #then[the development collector refuses a submission without a declared length, including a chunked one, before reading its body]
       #then[any other invalid submission is refused as invalid]
       #then[no stored state changes]
     ]

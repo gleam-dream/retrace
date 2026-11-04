@@ -35,7 +35,7 @@ The archive context holds the rules. `dev/backend-check.py` exercises the collec
 real storage for acknowledgement, concurrent identical submissions, conflict and order
 refusal, invalid-batch refusal, listing for one user reference and ordered paging after
 archival. `support/server_checks` exercises the 128-batch page at the server level.
-`support/collector/test` checks the oversized refusal for declared and chunked bodies. Three
+`support/collector/test` checks the oversized refusal and the refusal of bodies without a declared length. Three
 rules have no collector-level check yet: the listing bound and order, the empty pages and the
 storage-failure reporting. They are stated from the collector and
 server code. A collector that serves a different shape fails the packaged viewer at its first
