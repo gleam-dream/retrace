@@ -40,6 +40,14 @@ only. With a token set, submit through `client.start_with` and a transport from
 `client/adapter.transport`, read through a custom `viewer.Source`, or put a
 same-origin proxy that adds the header in front of the collector.
 
+## Body limit
+
+A batch body larger than `wire.max_bytes` (1 MiB) is refused with `413`. A
+declared `Content-Length` over the limit is refused before the body is read, and
+a chunked body is streamed and refused once it passes the limit. mist still
+buffers one transfer chunk whole before handing it over, so a single oversized
+chunk is held in memory until it arrives.
+
 From the repository's Nix shell, run `bash dev/services.sh` to start its local
 services and collector. Run `python3 dev/backend-check.py` to check ingestion and
 archive readback against those services.

@@ -284,6 +284,46 @@ fn query(req: Request(mist.Connection), key: String) -> String {
   |> result.unwrap("")
 }
 
+type BodyError {
+  TooLarge
+  Unreadable
+}
+
+// mist.read_body checks only Content-Length, and reads a chunked body whole
+// before any limit applies. Streaming stops one byte past the limit instead.
+fn read_bounded_body(
+  req: Request(mist.Connection),
+  limit: Int,
+) -> Result(BitArray, BodyError) {
+  let declared =
+    request.get_header(req, "content-length") |> result.try(int.parse)
+  case declared {
+    Ok(length) if length > limit -> Error(TooLarge)
+    _ ->
+      case mist.stream(req) {
+        Error(_) -> Error(Unreadable)
+        Ok(consume) -> read_chunks(consume, limit, <<>>)
+      }
+  }
+}
+
+fn read_chunks(
+  consume: fn(Int) -> Result(mist.Chunk, mist.ReadError),
+  limit: Int,
+  body: BitArray,
+) -> Result(BitArray, BodyError) {
+  let remaining = limit - bit_array.byte_size(body)
+  case consume(int.min(65_536, remaining + 1)) {
+    Error(_) -> Error(Unreadable)
+    Ok(mist.Done) -> Ok(body)
+    Ok(mist.Chunk(chunk, next)) ->
+      case bit_array.byte_size(chunk) > remaining {
+        True -> Error(TooLarge)
+        False -> read_chunks(next, limit, bit_array.append(body, chunk))
+      }
+  }
+}
+
 fn route(
   db: pog.Connection,
   store: ObjectStore,
@@ -293,15 +333,18 @@ fn route(
     http.Get, ["", "health"] ->
       reply(200, json.object([#("ok", json.bool(True))]))
     http.Post, ["", "batches"] ->
-      case mist.read_body(req, wire.max_bytes) {
-        Error(_) ->
+      case read_bounded_body(req, wire.max_bytes) {
+        Error(TooLarge) ->
           reply(
             413,
             json.object([#("error", json.string("Batch body exceeds limit"))]),
           )
+          |> response.set_header("connection", "close")
+        Error(Unreadable) ->
+          failed(retrace_server.InvalidBatch(wire.MalformedEnvelope))
         Ok(body) ->
           case
-            bit_array.to_string(body.body)
+            bit_array.to_string(body)
             |> result.map_error(fn(_) { wire.MalformedEnvelope })
             |> result.try(wire.decode_batch)
           {
