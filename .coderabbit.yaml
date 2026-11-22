@@ -209,8 +209,13 @@ reviews:
           identity string treated as proof of authenticity or viewer
           authorization.
         - Flag local save, collector acknowledgement and object archival
-          merged, queued data removed before the session and final cursor are
-          verified, and a retry of a permanently invalid first batch.
+          merged, and queued data removed before the session and final cursor
+          are verified.
+        - Flag a rejected batch removed without its matching
+          acknowledgement or reported as delivered, and code that counts on
+          retry to repair a permanently invalid first batch. A rejected batch
+          that stays queued under fixed-delay retry and blocks its queue is
+          the designed behavior (Recording design, Client delivery).
         - Flag faked upload success used to implement export.
         - Flag server admission outside `accept` or `accept_in_transaction`'s
           atomicity, and erasure that reports `Erased` from worker death, a
@@ -227,8 +232,10 @@ reviews:
           data.
         - Flag one session shared by concurrent writers, and an elapsed clock
           that is not monotonic.
-        - Flag a recorder not retained after `record`, and a checkpoint not
-          taken of the model the reducer returned.
+        - With the core API, flag a recorder not retained after
+          `retrace.record`, and a `retrace.checkpoint` not given the model the
+          reducer returned for the event just recorded. This rule covers core
+          recording only; capture takes the pre-transition model (next rule).
         - Flag `capture.observe` called before the capture startup effect ran
           and its connection message went through `capture.update`, given the
           post-transition model, or given coordination messages.
@@ -317,7 +324,7 @@ reviews:
           upload or domain failure that leaves the ordinary response path or
           returns private diagnostics.
 
-    - path: "{test/**,packages/retrace_frontend/test/**,support/client_checks/**,support/server_checks/**,support/collector/test/**,examples/**/*.test.mjs,dev/*.mjs}"
+    - path: "{test/**,packages/retrace_frontend/test/**,support/client_checks/**,support/server_checks/**,support/collector/test/**,examples/**/*.test.mjs,dev/**/*.{mjs,js},dev/simulator/Tests/**}"
       instructions: |
         Tests and runtime checks (testing).
         - Flag a test that confirms success through internals, private state,
@@ -364,8 +371,9 @@ reviews:
         - Flag an edit to an accepted ADR's text instead of a superseding ADR,
           and a changed date on a pending entry.
 
-    # AGENTS.md names the local tracker; no issue file exists yet.
-    - path: "issues/**/*.md"
+    # AGENTS.md names the local tracker; no issue file exists yet. Issue
+    # records only; a feature PRD carries no Status or Category header.
+    - path: "issues/*/issues/*.md"
       instructions: |
         Local tracker (tracker; AGENTS.md).
         - Each issue file carries one `Status:` and one `Category:` header
@@ -410,18 +418,26 @@ reviews:
           loosens a test, a browser or server check, or a step of
           dev/check.sh, dev/git-consumer-check.sh or CI (including removing a
           package, target or example from a run, or adding
-          `continue-on-error`), and the pull request description does not name
-          the behavior that no longer exists or the stronger check that
-          replaces it. Pass otherwise.
+          `continue-on-error`), unless the pull request description names, for
+          each weakened test, check, target or step, the behavior that no
+          longer exists or the stronger check that replaces it. One named
+          replacement covers only the item it names: dropping the Erlang and
+          the JavaScript run of the core needs an entry for each. Pass
+          otherwise.
       - name: Behavior change carries its design
         mode: warning
         instructions: |
-          Source: policy, design. Warn if the diff changes public behavior, an
-          invariant, the wire envelope or the server schema in src/ or
-          packages/ with no change under docs/design or docs/adr, and the pull
-          request description does not say the change restores designed
-          behavior or preserves behavior. Pass for tests, tooling and
-          documentation-only changes.
+          Source: policy, design. For each contract the diff changes (public
+          behavior, an invariant, the wire envelope, the server schema or the
+          collector protocol) in src/, packages/, support/collector/ or
+          examples/, find its owning design context and section in
+          docs/COVERAGE.md. Warn for each such contract unless either holds:
+          the diff changes that owning section or an ADR on it, or the pull
+          request description names that section as the behavior the change
+          restores or preserves and the diff does what the section states. A
+          change to another context's design, or a bare claim that behavior
+          is preserved, does not cover it. Pass for tests, checks, tooling
+          and documentation-only changes.
       - name: Breaking change is declared
         mode: warning
         instructions: |
