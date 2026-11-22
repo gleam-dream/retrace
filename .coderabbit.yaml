@@ -390,7 +390,12 @@ reviews:
         - Flag a check that passes or skips when its tool, browser, database
           or simulator is missing; it fails or reports unmeasured.
         - Flag a tool not supplied through the Nix flake, and a command that
-          differs between local runs and CI.
+          differs between local runs and CI. The one exemption is Apple's
+          Xcode toolchain and iOS Simulator runtime (`xcrun`, `simctl`,
+          `xcodebuild`) that dev/simulator/README.md names as host
+          requirements, because Nix cannot supply them. Flag any other host
+          tool, and a simulator check that passes or skips when Xcode is
+          missing.
         - Flag a new check that encodes a layout, naming or README
           convention, a check that scripts what a tool already performs, and
           a repository-local shape, documentation-equality or checker
