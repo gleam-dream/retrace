@@ -1,0 +1,544 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+#
+# Review policy for retrace, derived by the coderabbit-config skill.
+# Each instruction names the skill it comes from; `policy` is the review policy
+# of coderabbit-config itself, and `repository` marks a rule beyond the catalog.
+#
+# Catalogs read:
+#   practice catalog (not public)  879841a61c3f83cd809edca9229c4a6bb7f909f8
+#   gleam-agent-tools  6a9ea2f647e787a32d3c7fa88d9c58c5b81ae9d7
+#
+# Governing skills: coderabbit-config (policy), gleam, gleam-lib, gleam-ffi,
+# retrace, lustre, gleam-sql (its Pog rules), gleam-otp, wisp (its Mist
+# rules), testing, python, design, tracker, gate, git. No catalog skill
+# governs the Swift simulator test, the Tauri Rust shell or plain JavaScript;
+# the typescript skill does not apply because the repository has no
+# TypeScript.
+#
+# Governing dependency versions: retrace 0.1.0 (root gleam.toml),
+# retrace_frontend 0.1.1 and retrace_server 0.1.0 (this repository's
+# packages). The retrace skill names coordinated 0.1.0 releases; the rules
+# taken were checked against the 0.1.1 frontend source. Locked:
+# lustre 5.7.1 (packages/retrace_frontend, examples), pog 4.1.0 and pgo 0.20.0
+# (packages/retrace_server, support), mist 6.0.3 and glisten 9.0.1
+# (support/collector), gleam_otp 1.3.0, gleam_erlang 1.3.0, bucket 1.4.0,
+# gleam_json 3.1.0, gleam_stdlib 1.0.5, gleeunit 1.11.0.
+language: en-US
+tone_instructions: >-
+  Literal and concise. Report only defects you can evidence from the diff, its
+  callers, the design, or a cited rule. One finding per cause. An empty review
+  is valid.
+early_access: false
+
+reviews:
+  profile: chill
+  request_changes_workflow: false
+  high_level_summary: true
+  high_level_summary_instructions: |
+    Lead with the problem the change solves, then the response in one short
+    paragraph, then the public API, wire envelope or stored-schema effect, if
+    any. Do not narrate the diff file by file.
+  review_status: true
+  commit_status: true
+  fail_commit_status: true
+  collapse_walkthrough: true
+  changed_files_summary: false
+  sequence_diagrams: false
+  estimate_code_review_effort: false
+  assess_linked_issues: true
+  related_issues: true
+  related_prs: false
+  suggested_labels: false
+  suggested_reviewers: false
+  auto_assign_reviewers: false
+  poem: false
+  in_progress_fortune: false
+  enable_prompt_for_ai_agents: true
+
+  auto_review:
+    enabled: true
+    drafts: false
+    auto_incremental_review: true
+    base_branches:
+      - main
+
+  # Rendered, locked and binary output.
+  path_filters:
+    - "!flake.lock"
+    - "!**/package-lock.json"
+    - "!examples/advanced/src-tauri/Cargo.lock"
+    - "!examples/advanced/src-tauri/icons/**"
+    - "!docs/design/design-layer.pdf"
+
+  path_instructions:
+    - path: "{src,packages,support,examples}/**"
+      instructions: |
+        Review policy (policy).
+        - Design first. docs/COVERAGE.md maps each part to its owner among the
+          root design (docs/design/design.typ) and the Recording, Archive and
+          Replay contexts under docs/design (indexed by docs/CONTEXT-MAP.md),
+          and to docs/adr. Flag code that contradicts that unit's interface,
+          invariants or side effects, and a change to designed behavior with
+          no change to its design. A fix that restores designed behavior needs
+          none. When code and design disagree, the design changes first.
+        - Core abstractions. Flag a second representation of a concept the
+          design names (Session, Entry, Checkpoint, Recording cursor, Batch,
+          Acknowledgement, Replay contract, Delivery queue, Batch receipt,
+          Archive generation, Deletion fence, Write attempt, Quiescence,
+          Replay module, Replay artifact, Build identity), a name that differs
+          from the context's CONTEXT.typ, a term used outside the context that
+          owns it with another meaning, and a module that reaches into
+          `retrace_server/internal` past the interface that owns it.
+        - Lean. Flag code no test, caller or unit needs: an unset option, an
+          unvaried parameter, a wrapper that adds no rule, an unreachable
+          branch. Say what to delete.
+        - Migration, never a legacy path. Flag a compatibility shim, a
+          fallback to an old format, a dual read or write, a deprecated alias,
+          and a flag that keeps old behavior. A change to a public module
+          ships as a breaking release with a migration note.
+        - Composable. In a public module, flag hidden call ordering, global
+          state, a mandatory framework where functions compose, a concept the
+          common caller must learn and does not need, and a module with two
+          responsibilities.
+        - Test first. Flag a behavior change with no test that exercises it,
+          and a test bound to internals.
+        - Typed before foreign. Flag JavaScript or Erlang where Gleam does
+          the job, an unchecked cast, an untyped value that reaches domain
+          logic undecoded, and a crash on a routine failure.
+        - Silence. Report nothing that `nix fmt`, the compiler, the tests or
+          dev/check.sh decide, and no layout or naming preference without a
+          written rule.
+
+    - path: "{src,test,packages,support,examples}/**/*.gleam"
+      instructions: |
+        Gleam (gleam).
+        - Flag a module function, private included, without annotated
+          arguments and return type, and an imported function or constant used
+          unqualified.
+        - Flag a name against the conventions: `Json` not `JSON`,
+          conversions named `x_to_y` or `to_y` inside module `x`, `try_` only
+          for an error-propagating counterpart.
+        - Flag `Option` carrying a failure, and a change that merges omitted,
+          explicit false, empty and failed where they mean different things.
+        - Flag an error a caller must parse as a string to choose recovery.
+        - Flag independent optional fields or booleans standing for exclusive
+          states; they are variants.
+        - Flag a predicate check followed by `let assert` on the same shape,
+          and a catch-all branch that silently accepts a new variant of a
+          replay failure, erasure progress or delivery state.
+        - Flag `panic` or `let assert` handling a routine decode, storage or
+          network failure in a package's `src/`.
+        - Flag a refactor that changes observable errors, ordering or effects.
+        - Flag a compatibility branch with no comment saying why it exists.
+        - Flag `src/` importing a `test/` or `dev/` module or `gleeunit`.
+        - Flag a new process, module or generic machinery added only for
+          organization, and a local type replacing a compatible ecosystem type.
+
+    - path: "{src,packages}/**/*.gleam"
+      instructions: |
+        Published library surface (gleam-lib; AGENTS.md). Exported
+        constructors, fields, variants, module paths and behavior of
+        `retrace`, `retrace_frontend` and `retrace_server` outside
+        `retrace_server/internal` are the compatibility surface.
+        - Flag a Lustre, database or network import in the root `src/`; the
+          core stays portable on Erlang and JavaScript (AGENTS.md).
+        - Flag a package that takes ownership the design gives the
+          application: safe data selection, runtime lifetimes, workers,
+          running migrations, authentication, consent, retention
+          (AGENTS.md).
+        - Flag a removed or changed export, variant, field or behavior in a
+          public module that the pull request does not call breaking.
+        - Flag a public signature that exposes an implementation-state type
+          parameter.
+        - Flag an argument that does not affect behavior, a setter per field
+          where a record update works, and two public paths for one common
+          task.
+        - Flag configuration validated after a client, pool or worker is
+          allocated, and a builder or adapter protocol with no distinct use
+          case.
+        - Flag a deliberate crash on a failure the caller could act on; return
+          a structured error instead.
+        - Flag a core claim that holds on only one of Erlang and JavaScript.
+
+    - path: "{packages,support,examples}/**/*.{gleam,mjs,erl}"
+      instructions: |
+        Foreign boundaries (gleam-ffi). Apply to `*.erl` and `*.mjs` files a
+        Gleam module declares with `@external`, and to that Gleam module.
+        - Flag validation, branching or state transitions in foreign code; it
+          performs the native call and the representation conversion only.
+        - Flag an external that declares a native value to be a checked domain
+          value, `Dynamic` or a type variable that accepts every handle, and a
+          generic return that hides an unchecked cast.
+        - Flag a JavaScript foreign function that builds a Gleam `Result`,
+          list or variant as a lookalike object instead of through the
+          generated `gleam.mjs` constructors, and an import of the prelude not
+          resolved relative to the generated module.
+        - Flag an expected native failure (storage quota, Tauri command,
+          fetch, S3) not mapped to the declared failure value, and code that
+          assumes Gleam catches a foreign exception.
+        - Flag an `async` export or a callback declared as a plain value; a
+          Promise must be modelled.
+        - Flag an exact integer, such as a cursor or elapsed time, passed
+          through a JavaScript number beyond the safe range.
+        - Flag a handle, listener or callback registration with no stated
+          owner and cleanup, and a callback that can arrive after disposal.
+        - Flag a browser or Tauri claim backed only by Node, and a native
+          claim backed only by a browser run (ADR-0012).
+        - Flag a foreign function with no remaining caller.
+
+    - path: "{src,packages}/**/*.{gleam,mjs}"
+      instructions: |
+        Retrace contracts (retrace; rules for 0.1.x).
+        - Flag capture or encoding of a model or message that is not the
+          application's safe projection, and redaction done only in the
+          viewer after recording.
+        - Flag `record` treated as a persistence acknowledgement, and a
+          checkpoint, cursor and outbox committed inconsistently where crash
+          recovery depends on them.
+        - Flag `resume` granting exclusive writer ownership, and one writer
+          cursor shared by concurrent writers.
+        - Flag capture that accepts an observation before its startup
+          connection message, takes the post-transition model, or records
+          coordination messages in the domain stream.
+        - Flag replay that runs a live effect or a live update path.
+        - Flag a replay step failure (gap, duplicate, contract mismatch,
+          backwards time, reducer error) that changes the prior player or
+          collapses into another failure.
+        - Flag a missing or incompatible historical artifact replaced by
+          today's reducer instead of refused, and a build or contract
+          identity string treated as proof of authenticity or viewer
+          authorization.
+        - Flag local save, collector acknowledgement and object archival
+          merged, and queued data removed before the session and final cursor
+          are verified.
+        - Flag a rejected batch removed without its matching
+          acknowledgement or reported as delivered, and code that counts on
+          retry to repair a permanently invalid first batch. A rejected batch
+          that stays queued under fixed-delay retry and blocks its queue is
+          the designed behavior (Recording design, Client delivery).
+        - Flag faked upload success used to implement export.
+        - Flag server admission outside `accept` or `accept_in_transaction`'s
+          atomicity, and erasure that reports `Erased` from worker death, a
+          timeout or a DELETE alone, or treats fencing as stopping already
+          admitted attempts.
+        - Flag a schema change in `retrace_server` that installed databases
+          on an earlier layout cannot reach.
+
+    - path: "{examples,support}/**/*.{gleam,mjs}"
+      instructions: |
+        Retrace consumers (retrace; rules for 0.1.x). Apply to a module that
+        imports `retrace`, `retrace_frontend` or `retrace_server`.
+        - Flag capture of a model or message not first projected to safe
+          data.
+        - Flag one session shared by concurrent writers, and an elapsed clock
+          that is not monotonic.
+        - With the core API, flag a recorder not retained after
+          `retrace.record`, and a `retrace.checkpoint` not given the model the
+          reducer returned for the event just recorded. This rule covers core
+          recording only; capture takes the pre-transition model (next rule).
+        - Flag `capture.observe` called before the capture startup effect ran
+          and its connection message went through `capture.update`, given the
+          post-transition model, or given coordination messages.
+        - Flag capture failure handled inside the domain update, and stopped
+          recording left silent where users depend on capture.
+        - Flag a replay reducer or view that is not deterministic and inert,
+          and external results not recorded as messages.
+        - Flag a client the module starts without `client.stop`, and a
+          replay or viewer disposer not invoked.
+        - Flag `accept_in_transaction` outside a caller-owned transaction,
+          and erasure driven without `Eraser(remove, quiesced)` or without
+          matching `Erasing`, `AwaitingWriters` and `Erased`.
+
+    - path: "{packages/retrace_frontend,support/client_checks,examples}/**/*.gleam"
+      instructions: |
+        Lustre (lustre; rules for lustre 5.7.1). Apply to a module that
+        imports `lustre`.
+        - Flag a request, timer, random read, clock read or DOM access inside
+          `init`, `update` or `view`; return it as an effect and its result as
+          a message.
+        - Flag `update` called recursively with a fabricated message.
+        - Flag an asynchronous result applied without correlation to its
+          request or model revision, so a superseded response can overwrite
+          current state.
+        - Flag dependent work that relies on `effect.batch` ordering.
+        - Flag an event payload not decoded into a typed message at ingress.
+        - Flag a long-lived event source not installed through a managed
+          effect with cleanup.
+        - Flag a component created for file size, and a shared draft held in
+          two places.
+        - Flag simulation presented as proof of effect execution or cleanup.
+
+    - path: "{packages/retrace_server,support}/**/*.gleam"
+      instructions: |
+        PostgreSQL access (gleam-sql; rules for pog 4.1.0). Apply to a module
+        that imports `pog`.
+        - Flag a query run on the pool inside a transaction callback instead
+          of the callback's transaction connection.
+        - Flag a caller-controlled identifier or value interpolated into SQL
+          text; bind values as parameters.
+        - Flag an `Error` after a write treated as proof that no write
+          happened, and a decode failure after a write that is not propagated
+          through the transaction.
+        - Flag `numeric` decoded as `Float` where the value is exact, and
+          JSON or JSONB text reaching domain logic without decoding.
+        - Flag an empty string silently converted to null.
+        - Flag a database invariant enforced only by an application check
+          where concurrent writers can interleave; use a constraint or a lock.
+        - Flag object-store effects claimed atomic with a database commit.
+        - Flag pool readiness assumed from a successful start instead of an
+          actual query.
+
+    - path: "{packages/retrace_server,support}/**/*.gleam"
+      instructions: |
+        Processes (gleam-otp; rules for gleam_otp 1.3.0, gleam_erlang 1.3.0).
+        Apply to a module that imports `gleam/otp` or `gleam/erlang/process`.
+        - Flag `process.call` whose timeout or callee exit is handled as a
+          returned error or as proof the request had no effect, and a call
+          timeout that triggers an unconditional retry of an archive write.
+        - Flag object-store or database work inside a process that must stay
+          responsive to cancellation or erasure.
+        - Flag a subject received from outside its owning process.
+        - Flag read workers, accepted uploads or waiting messages with no
+          bound.
+        - Flag a process name or atom created from session ids or request
+          input.
+        - Flag a library that starts its own long-lived workers where the
+          caller owns them (AGENTS.md).
+        - Flag a spawn closure, message or start argument that captures a
+          whole environment or batch set; capture small references.
+        - Flag an actor introduced only to organize functions.
+
+    - path: "support/collector/**/*.gleam"
+      instructions: |
+        Mist collector (wisp; rules for mist 6.0.3, glisten 9.0.1). Apply to
+        a module that imports `mist`.
+        - Flag a handler or `after_start` callback passed to `mist.start` that
+          captures a large value; each connection process holds a copy.
+          Reach it through a module constant, `persistent_term` written once
+          at start, or a named process asked for one entry.
+        - Flag a route table, codec or directory built inside the handler on
+          every request.
+        - Flag a request body read twice, or read by two layers, and a body
+          limit not enforced at the adapter.
+        - Flag access checks merged with resource permission, and a malformed
+          upload or domain failure that leaves the ordinary response path or
+          returns private diagnostics.
+
+    - path: "{test/**,packages/retrace_frontend/test/**,support/client_checks/**,support/server_checks/**,support/collector/test/**,examples/**/*.test.mjs,dev/**/*.{mjs,js},dev/simulator/Tests/**}"
+      instructions: |
+        Tests and runtime checks (testing).
+        - Flag a test that confirms success through internals, private state,
+          table queries or a side channel where the public API can show it.
+        - Flag a mock of an internal collaborator, and an assertion on call
+          counts or call order.
+        - Flag a scenario outcome that no design rule states.
+        - Flag tests left in place for an interface the diff replaced.
+        - Flag a refusal or illegal transition the change introduces with no
+          test through the public boundary.
+        - Flag a browser check that addresses an element by CSS selector or
+          test id where an accessible role and name can.
+        - Flag archive, admission or erasure behavior tested against a
+          stand-in instead of PostgreSQL and the local object store.
+        - Flag a changed core claim tested on one of Erlang and JavaScript
+          only.
+
+    - path: "dev/*.py"
+      instructions: |
+        Python checks (python).
+        - Flag `Any`, and an external value (file, JSON, process output) used
+          without parsing.
+        - Flag an abstract base class hierarchy; use `Protocol`.
+        - Flag mutable dataclasses inside the program, and exclusive states as
+          flags instead of tagged frozen dataclasses matched with
+          `assert_never`.
+        - Flag a parser model passed past the boundary.
+
+    - path: "docs/{design,adr}/**"
+      instructions: |
+        Design layer (design; policy).
+        - Fresh reader. The reviewer never saw the change being made. Flag a
+          changed unit that does not tell a reader with no memory what the
+          code does not say, and a unit that copies the code.
+        - Flag content the code states: payloads, fields, limits, timeouts,
+          function or file lists, queries. Name the rule it serves instead; a
+          file or symbol is allowed only where a reader needs it to find where
+          a rule is enforced.
+        - Flag session narration, progress notes, status or delivery history.
+        - Flag a unit missing one of overview, interface, invariants, side
+          effects and verification; an empty part says "none".
+        - Flag a concept defined in a second home or a second context, a
+          glossary term with two meanings, and a retired term reused.
+        - Flag an edit to an accepted ADR's text instead of a superseding ADR,
+          and a changed date on a pending entry.
+
+    # AGENTS.md names the local tracker; no issue file exists yet. Issue
+    # records only; a feature PRD carries no Status or Category header.
+    - path: "issues/*/issues/*.md"
+      instructions: |
+        Local tracker (tracker; AGENTS.md).
+        - Each issue file carries one `Status:` and one `Category:` header
+          with a value AGENTS.md lists.
+        - Flag an issue titled with a solution instead of the observable
+          problem, line numbers or solution code in an issue, and a horizontal
+          task such as "build the data layer".
+        - Flag an AI-written comment that does not start with
+          `AI-assisted contribution.`
+
+    - path: "{dev/**/*.sh,flake.nix,lefthook.yml,.github/**}"
+      instructions: |
+        Gate (gate).
+        - Flag a check that passes or skips when its tool, browser, database
+          or simulator is missing; it fails or reports unmeasured.
+        - Flag a tool not supplied through the Nix flake, and a command that
+          differs between local runs and CI. The one exemption is Apple's
+          Xcode toolchain and iOS Simulator runtime (`xcrun`, `simctl`,
+          `xcodebuild`) that dev/simulator/README.md names as host
+          requirements, because Nix cannot supply them. Flag any other host
+          tool, and a simulator check that passes or skips when Xcode is
+          missing.
+        - Flag a new check that encodes a layout, naming or README
+          convention, a check that scripts what a tool already performs, and
+          a repository-local shape, documentation-equality or checker
+          self-test (AGENTS.md).
+        - Flag a replaced check that drops security or data-integrity
+          coverage, such as archive, erasure or protected-viewer checks.
+        - Flag a gate that keeps a formatting check but loses compile or
+          behavior tests for a package, the consumer builds or the usage
+          examples.
+
+    - path: ".github/workflows/pr-title.yml"
+      instructions: |
+        Pull request title check (gate).
+        - This file mirrors the shared title workflow. Flag a change that
+          makes it differ from the shared copy: types, patterns, action pin,
+          triggers or permissions.
+        - It is the one convention CI checks, so do not flag it as a
+          convention turned into a check.
+        - Its tool is the pinned action in place of a flake tool, because the
+          title exists on the pull request and never in a checkout.
+
+  pre_merge_checks:
+    title:
+      mode: "off"
+    description:
+      mode: warning
+    issue_assessment:
+      mode: "off"
+    docstrings:
+      mode: "off"
+    custom_checks:
+      - name: No weakened test or gate
+        mode: error
+        instructions: |
+          Source: policy, gate. Fail if the diff skips, deletes, disables or
+          loosens a test, a browser or server check, or a step of
+          dev/check.sh, dev/git-consumer-check.sh or CI (including removing a
+          package, target or example from a run, or adding
+          `continue-on-error`), unless the pull request description names, for
+          each weakened test, check, target or step, the behavior that no
+          longer exists or the stronger check that replaces it. One named
+          replacement covers only the item it names: dropping the Erlang and
+          the JavaScript run of the core needs an entry for each. Pass
+          otherwise.
+      - name: Behavior change carries its design
+        mode: warning
+        instructions: |
+          Source: policy, design. For each contract the diff changes (public
+          behavior, an invariant, the wire envelope, the server schema or the
+          collector protocol) in src/, packages/, support/collector/ or
+          examples/, find its owning design context and section in
+          docs/COVERAGE.md. Warn for each such contract unless either holds:
+          the diff changes that owning section or an ADR on it, or the pull
+          request description names that section as the behavior the change
+          restores or preserves and the diff does what the section states. A
+          change to another context's design, or a bare claim that behavior
+          is preserved, does not cover it. Pass for tests, checks, tooling
+          and documentation-only changes.
+      - name: Breaking change is declared
+        mode: warning
+        instructions: |
+          Source: policy, gleam-lib. Warn if the diff removes or changes an
+          exported function, type, constructor, field or module path in
+          `retrace`, `retrace_frontend` or `retrace_server` outside
+          `retrace_server/internal`, and the pull request description does
+          not call the change breaking and give its migration. Pass
+          otherwise.
+      - name: Problem-first description
+        mode: warning
+        instructions: |
+          Source: git. Warn unless the pull request description gives the
+          problem, why it matters, one concrete example, the solution in one
+          paragraph, its trade-offs, and what was verified, with no file
+          tour, and its claims match the diff.
+      - name: No attribution text
+        mode: warning
+        instructions: |
+          Source: git. Warn if the pull request title or description contains
+          a co-author credit, `Co-Authored-By`, a "Generated with" or
+          "Generated by" line, or a line starting with the robot emoji.
+
+  finishing_touches:
+    docstrings:
+      enabled: false
+    unit_tests:
+      enabled: false
+    simplify:
+      enabled: false
+
+  tools:
+    gitleaks:
+      enabled: true
+    trufflehog:
+      enabled: true
+    actionlint:
+      enabled: true
+    zizmor:
+      enabled: true
+    shellcheck:
+      enabled: true
+    ruff:
+      enabled: true
+    # The repository runs no JavaScript, HTML, CSS, Swift, Rust, prose or
+    # YAML linter and no second Python linter; their findings would be
+    # preferences without a written rule (policy, Silence).
+    biome:
+      enabled: false
+    eslint:
+      enabled: false
+    oxc:
+      enabled: false
+    htmlhint:
+      enabled: false
+    stylelint:
+      enabled: false
+    swiftlint:
+      enabled: false
+    clippy:
+      enabled: false
+    pylint:
+      enabled: false
+    flake8:
+      enabled: false
+    markdownlint:
+      enabled: false
+    languagetool:
+      enabled: false
+    yamllint:
+      enabled: false
+    github-checks:
+      enabled: true
+
+chat:
+  auto_reply: true
+
+knowledge_base:
+  code_guidelines:
+    enabled: true
+    # AGENTS.md and CLAUDE.md are read by default.
+    filePatterns:
+      - files: "docs/COVERAGE.md,docs/CONTEXT-MAP.md,docs/design/**/*.typ,docs/adr/*.md"
+        applyTo: "src/**,test/**,packages/**,support/**,examples/**,dev/**"
+  learnings:
+    scope: local
+  pull_requests:
+    scope: local
