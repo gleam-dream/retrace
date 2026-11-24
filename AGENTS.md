@@ -39,6 +39,13 @@ npm --prefix examples/advanced test -- viewer-api-browser-check     # cancellati
 
 If Playwright's Chromium is missing, run `npx playwright install chromium` in `examples/advanced`. Native runtime and Simulator checks are in `examples/advanced/README.md` and `dev/simulator/README.md`.
 
+## Releasing
+
+- `nix run github:gleam-dream/.github#release -- <version>` (or `-- <package> <version>` for `retrace_frontend` and `retrace_server`) opens the version-bump pull request from a clean, current `main`. It never tags and never publishes. Nix supplies every tool it calls.
+- After the merge, tag the merge commit `v<version>`, or `<package>-v<version>` for `retrace_frontend` and `retrace_server`, and push the tag. The `Release` workflow uploads the package to Hex, where it stays staged.
+- Staged publishing is on for this package on hex.pm, so a release becomes public only when a Hex maintainer approves it there with a second factor. If that setting is ever turned off, a pushed tag publishes at once; never push a release tag while it is off. An agent stops after pushing the tag and reports whether the release waits for approval or is public.
+- Push a release tag only on an explicit request that names the version. The steps and the way to undo a release are in the [shared workflow's README](https://github.com/gleam-dream/.github#publishing-a-package-to-hex).
+
 ## References
 
 - [Usage topics](examples/README.md#usage-topics): usage lives as compiled, runnable examples, each with the check that fails when the API moves. Add or change a topic there, not in prose.
