@@ -41,6 +41,9 @@ const acknowledge = async (sent) => {
   });
 };
 
+// The upload operation in both transport shapes: a function for revisions
+// before sessions were opened by the collector, and `send` for later ones.
+const uploads = (send) => Object.assign(send, { send });
 async function idle(seconds) {
   mock.timers.enable({ apis: ["setTimeout"] });
   const queue = store();
@@ -51,7 +54,7 @@ async function idle(seconds) {
     1e6,
     () => statuses++,
     async () => queue,
-    acknowledge,
+    uploads(acknowledge),
   );
   await settle();
   const before = { reads: queue.reads.calls, statuses };
@@ -74,7 +77,7 @@ async function drain(backlog) {
     1e9,
     (_, ack) => (acknowledged = ack),
     async () => queue,
-    acknowledge,
+    uploads(acknowledge),
   );
   while (acknowledged < backlog) await settle();
   const elapsed = performance.now() - started;
@@ -92,10 +95,10 @@ async function outage(backlog, saves) {
     1e9,
     () => {},
     async () => queue,
-    async () => {
+    uploads(async () => {
       attempts++;
       throw Error("offline");
-    },
+    }),
   );
   await settle();
   const before = queue.reads.rows;
