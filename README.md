@@ -198,8 +198,9 @@ replay artifacts and custom adapters.
   host must supply authentication, tenant isolation, consent and retention policy.
 - The collector, not the client, chooses each session id and issues a write
   token with it. Only the writer that opened a session can append to it.
-- Monitor persistence and delivery status. A permanently rejected batch can
-  block later batches; the application owns outbox and durable-cursor recovery.
+- Monitor persistence and delivery status. When the collector permanently
+  rejects a session, the client discards that session's saved batches and
+  delivers the others; the application owns outbox and durable-cursor recovery.
 - Erasure needs host evidence that uncertain uploads can no longer publish.
   Live tailing, event search and analytics are outside the implemented scope.
 

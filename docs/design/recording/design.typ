@@ -4,16 +4,16 @@
 #let body = [
   #section(title: "Foundation", lead: "Recording owns the application-neutral session data and its path from capture to an acknowledged batch.", body: [
     #goal(title: "Reconstruct application state from recorded messages")[A developer can rebuild the state of an application at any recorded point from the messages and checkpoints the application chose to record.]
-    #goal(title: "Deliver every saved batch until acknowledged")[A client saves a #term("term-batch") locally before uploading it, retries it after network failure or restart, and removes it only after its #term("term-acknowledgement").]
+    #goal(title: "Deliver every saved batch until acknowledged")[A client saves a #term("term-batch") locally before uploading it, retries it after network failure or restart, and removes it only after its #term("term-acknowledgement") or a #term("term-rejection") of its session.]
     #no-goal(title: "Automatic redaction")[Retrace does not infer which application state is safe to record. Debugger formatters cannot redact data already captured.]
     #invariant(title: "Invalid history never advances a player", enforcement: "mechanism")[A gap, duplicate position, foreign session or contract, backwards time, or failing reducer returns a typed failure and leaves the previous player usable.]
     #invariant(title: "Sequence and elapsed time never move backwards", enforcement: "mechanism")[A #term("term-recording-cursor") advances once per #term("term-entry"). Every sequence and elapsed-time integer fits the JavaScript exact-integer range.]
-    #invariant(title: "A batch stays queued until its matching acknowledgement", enforcement: "mechanism")[Only an acknowledgement matching the batch session and final sequence removes the batch from the #term("term-delivery-queue"). A late reply from a cancelled upload cannot remove it.]
+    #invariant(title: "A batch stays queued until acknowledged or rejected", enforcement: "mechanism")[Only an acknowledgement matching the batch session and final sequence, or a #term("term-rejection") of its session, removes the batch from the #term("term-delivery-queue"). A late reply from a cancelled upload cannot remove it.]
     #principle(title: "The application owns safe meaning", lens: "composition")[Applications select replay-safe messages, state projections, codecs, user references and #term("term-replay-contract") identifiers before capture. Reducer determinism and purity are application obligations that function types cannot prove.]
   ])
   #pending-ledger(
     pending-entry(title: "Native store and capture statements carried over from retired guides", kind: "verify", since: "2026-10-17")[
-      The statements on Tauri native store durability, one writing window per queue and the capture failure paths come from retired guides. This review confirmed the batch limits, the five-second upload deadline, the fixed retry delay and the acknowledgement check, and not the native store behavior.
+      The statements on Tauri native store durability, one writing window per queue and the capture failure paths come from retired guides. This review confirmed the batch limits, the five-second upload deadline and the acknowledgement check, and not the native store behavior.
     ],
   )
   #section(title: "Session and recording cursor", lead: "Pure values retain application types and report invalid history without advancing a player.", body: [
@@ -124,6 +124,18 @@
       #when[the network fails or the client runtime restarts before acknowledgement]
       #then[the batch remains available for retry with the same session and sequence]
     ]
+    #behavior(title: "A rejected session does not block other sessions", level: "boundary", area: "Delivery")[
+      #given[saved batches of several sessions awaiting delivery from one client]
+      #when[the collector permanently refuses a batch of one session]
+      #then[the client discards the saved batches of that session and reports the discard]
+      #then[the batches of the other sessions are uploaded]
+      #then[a later capture for the rejected session fails visibly]
+    ]
+    #behavior(title: "Failed uploads back off", level: "boundary", area: "Delivery")[
+      #given[a saved batch and a collector that fails without rejecting it]
+      #when[consecutive upload passes fail]
+      #then[the batch stays saved and each wait is longer than the previous one, up to the cap]
+    ]
     #behavior(title: "Capture failure stays visible", level: "interface", area: "Capture")[
       #given[the local queue is full or its storage write fails]
       #when[the application attempts to record another transition]
@@ -137,7 +149,10 @@
       #then[admitted storage work settles and borrowed resources remain caller-owned]
     ]
     #points(
-      [The client reports local save and upload acknowledgement as separate statuses through the application callback. It owns retry timers and exposes shutdown. Retry delays are fixed, and a permanently rejected batch blocks later uploads in its queue.],
+      [The client reports local save and upload acknowledgement as separate statuses through the application callback. It owns retry timers and exposes shutdown.],
+      [A failed upload pass keeps its batch and waits before the next pass. The wait doubles with each consecutive failure from 1.5 seconds up to a cap of 60 seconds, and a random part of up to half of it is removed so that clients do not retry together. A batch saved during the wait is uploaded by the next pass and does not shorten the wait. A delivered batch resets the wait, and an explicit retry request starts a pass at once.],
+      [A #term("term-rejection") is a refusal that an identical retry cannot change. The packaged HTTP transport reports one for a 4xx response other than 401, 403, 407, 408, 425 and 429. Only the writer that opened a session can upload to it, so a rejection of an upload is caused by this client or by erasure of the session, never by another writer. #adr(22) After a rejection the collector cannot admit a later batch of that session contiguously, so the client discards every saved batch of that session, reports the discard as a status, continues with the other sessions and refuses further capture for the rejected session. A rejected request to open a session fails the capture that made it.],
+      [Authorization, timeout and throttling responses, server errors, network failures and invalid acknowledgements keep the batch. Authorization failures stay retryable because they concern the host's credentials, which the host can repair and which every session shares; the write token, which only this client holds, is checked by admission and a mismatch is answered as a missing session.],
       [A client runtime has one writer and one sequential upload loop. Each page instance starts a fresh session and still drains durable batches left by earlier instances. Duplicate uploads from overlapping runtimes are safe on the server.],
       [Browser persistence defaults to IndexedDB. Tauri uses an explicitly selected native store adapter, and a browser-only build needs no Tauri plugin. Tauri assumes one writing window per queue and provides no cross-process locking.],
       [The #term("term-delivery-queue") caps pending capture and durable storage independently by item count and encoded bytes. Both caps together admit up to twice the encoded-payload budget plus metadata, encoding temporaries and storage-engine overhead. The caps are not a process heap limit.],
@@ -153,7 +168,7 @@
         [The bridge observes only the first completion, turns provider throws into failures, and ignores late replies. It starts no scheduler or retry loop and takes no ownership of resources. #adr(7)],
         [Storage operations must settle, and their cancellation callbacks are never invoked because admitted writes and deletions finish after shutdown. The caller releases storage resources after those operations settle.],
         [A put must enforce durable item and UTF-8-byte limits atomically, accept identical retries, reject conflicting content, and reply only after saving. Multiple writers are coordinated by the storage implementation.],
-        [Opening receives encoded session metadata and returns the encoded grant: the session the collector opened and its #term("term-write-token"). The client accepts a grant only for the metadata it asked for. Upload receives the exact encoded upload and returns the acknowledgement as encoded JSON, so byte identity is preserved and the application may interpret the upload with the wire module. A custom transport honors cancellation and rejects unsuccessful responses.],
+        [Opening receives encoded session metadata and returns the encoded grant: the session the collector opened and its #term("term-write-token"). The client accepts a grant only for the metadata it asked for. Upload receives the exact encoded upload and returns the acknowledgement as encoded JSON, so byte identity is preserved and the application may interpret the upload with the wire module. A custom transport honors cancellation and rejects unsuccessful responses. A typed transport supplies a predicate that classifies a provider error as a #term("term-rejection"), and a foreign transport marks one by throwing an error whose `rejected` property is true. An unclassified failure is retried.],
         [Provider error types stay in application callbacks until the selected formatter produces string diagnostics. Authentication headers never enter recorded events.],
       )
       #md-table(2,

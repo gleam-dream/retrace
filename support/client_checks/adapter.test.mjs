@@ -392,3 +392,46 @@ test("a typed transport opens the session the client asks for", async () => {
     client.stop(runtime);
   }
 });
+
+test("typed transport classifies a permanent refusal; only that session is discarded", async () => {
+  const state = memory(),
+    statuses = [],
+    sent = [];
+  const runtime = client.start_with(
+    config(),
+    state.adapter,
+    consumer.transport((body) => {
+      sent.push(body);
+      return (reply) => {
+        reply(ErrorResult(new consumer.Refused("session erased")));
+        return () => {};
+      };
+    }),
+    (status) => statuses.push(status),
+  );
+  try {
+    assert.ok((await save(runtime)).isOk());
+    await until(() => state.rows.size === 0);
+    assert.equal(sent.length, 1);
+    assert.ok(statuses.some((s) => /rejected/i.test(s.detail)));
+    assert.ok(statuses.every((s) => s.acknowledged === 0));
+  } finally {
+    client.stop(runtime);
+  }
+  // A failure the application does not classify as a refusal keeps the batch.
+  const kept = memory();
+  const retained = client.start_with(
+    config(),
+    kept.adapter,
+    consumer.transport(() => failure("offline")),
+    (status) => statuses.push(status),
+  );
+  try {
+    assert.ok((await save(retained)).isOk());
+    await until(() => statuses.some((s) => s.detail === "Provider: offline"));
+    assert.equal(kept.rows.size, 1);
+    assert.equal(kept.removes, 0);
+  } finally {
+    client.stop(retained);
+  }
+});

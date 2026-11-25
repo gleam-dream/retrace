@@ -295,7 +295,7 @@
     #points(
       [The three operations are the contract between the packaged client, the viewer and any collector that serves them. A collector may add operations, and it may not change or remove these. #adr(18)],
       [A collector authorizes callers and scopes tenants itself, because the server package does not. The development collector scopes no tenants, binds to loopback, admits browsers only from an origin allow-list, accepts an optional bearer token and stays outside the hosted-deployment policy. #adr(21)],
-      [Refusals reach callers as distinguishable categories: conflicting, invalid, oversized, erased session and unavailable storage. The client's handling of each category belongs to the separate client retry and rejected-batch ruling.],
+      [Refusals reach callers as distinguishable categories: conflicting, invalid, oversized, erased session and unavailable storage. The recording context defines how the client handles each category.],
     )
   ])
   #section(title: "Hosting and storage ownership", lead: "The server package borrows its resources, and the development collector is the example host.", body: [

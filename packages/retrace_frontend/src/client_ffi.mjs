@@ -63,8 +63,23 @@ async function openStorage(name, maxItems, maxBytes) {
 }
 
 export const browserStorage = () => openStorage;
+// A refusal that an identical retry cannot change. Only the session's own
+// writer can reach its session, so such a refusal is this client's to settle.
+// Authorization, timeout and throttling failures are excluded: the host may
+// repair credentials or capacity, and they affect every session alike.
+const rejects = (status) =>
+  status >= 400 &&
+  status < 500 &&
+  ![401, 403, 407, 408, 425, 429].includes(status);
+// Wait after the given number of consecutive failed passes: an exponential
+// step capped at one minute, of which a random half is removed as jitter.
+const retryDelay = (failures) => {
+  const step = Math.min(60000, 1500 * 2 ** Math.min(failures - 1, 16));
+  return Math.round(step / 2 + (Math.random() * step) / 2);
+};
 // A transport opens sessions and uploads batches; each returns the collector's
-// JSON reply. The runtime owns deadlines.
+// JSON reply. The runtime owns deadlines. A transport marks a permanent
+// refusal by throwing an Error whose `rejected` is true.
 export const httpTransport = (endpoint) => {
   const post = async (path, body, signal) => {
     const response = await fetch(`${endpoint.replace(/\/$/, "")}${path}`, {
@@ -73,12 +88,15 @@ export const httpTransport = (endpoint) => {
       body,
       signal,
     });
-    if (!response.ok)
-      throw Error(
-        response.status === 409
-          ? "Recording conflict; saved batch retained"
+    if (!response.ok) {
+      const error = Error(
+        rejects(response.status)
+          ? `Collector rejected the recording (HTTP ${response.status})`
           : "Collector unavailable; retrying",
       );
+      error.rejected = rejects(response.status);
+      throw error;
+    }
     return response.text();
   };
   return {
@@ -118,6 +136,9 @@ export function startWith(name, maxItems, maxBytes, onStatus, open, transport) {
     timer: null,
     fault: false,
     controller: null,
+    failures: 0,
+    waiting: false,
+    rejected: new Set(),
     opening: null,
   };
   client.storage = valid
@@ -150,6 +171,10 @@ export function enqueue(client, body, saved) {
       if (client.writeFailed)
         throw new Error("Recording stopped after a persistence failure");
       const batch = JSON.parse(body);
+      if (client.rejected.has(batch.session.id))
+        throw new Error(
+          "Collector rejected this session. Start a new session.",
+        );
       const key = `${batch.session.id}:${String(batch.checkpoint.sequence).padStart(16, "0")}`;
       const storage = await client.storage;
       await storage.put(key, body);
@@ -163,7 +188,8 @@ export function enqueue(client, body, saved) {
     .finally(() => {
       client.pendingItems--;
       client.pendingBytes -= bytes;
-      retry(client);
+      // A save must not cut a backoff wait short; the pending pass uploads it.
+      if (!client.waiting) retry(client);
     });
 }
 
@@ -187,54 +213,93 @@ async function request(client, send) {
   }
 }
 
+const sorted = (rows) => rows.sort((a, b) => a.key.localeCompare(b.key));
+const sessionOf = (row) => JSON.parse(row.body).session.id;
 export function retry(client) {
   if (client.stopped || client.busy) return;
   clearTimeout(client.timer);
+  client.waiting = false;
   client.busy = true;
+  let failed = false;
   (async () => {
     const storage = await client.storage;
-    let rows = await storage.all();
+    let rows = sorted(await storage.all());
+    let discarded = 0;
     if (client.opening && !client.stopped) {
       const { metadata, opened } = client.opening;
       client.onStatus(rows.length, client.ack, "Opening recording session");
-      const grant = await request(client, (signal) =>
-        client.transport.open(metadata, signal),
-      );
+      let grant;
+      try {
+        grant = await request(client, (signal) =>
+          client.transport.open(metadata, signal),
+        );
+      } catch (error) {
+        // A refused request cannot be repaired by sending it again.
+        if (error?.rejected !== true || client.stopped) throw error;
+        client.opening = null;
+        opened(false, error.message);
+      }
       if (client.stopped) return;
-      client.opening = null;
-      opened(true, grant);
+      if (grant !== undefined) {
+        client.opening = null;
+        opened(true, grant);
+      }
     }
-    rows.sort((a, b) => a.key.localeCompare(b.key));
     while (rows.length && !client.stopped) {
       const row = rows[0];
       const batch = JSON.parse(row.body);
+      if (client.rejected.has(batch.session.id)) {
+        // The collector refused this session, so no later batch of it can
+        // follow contiguously. Free the queue for the other sessions.
+        for (const other of rows)
+          if (sessionOf(other) === batch.session.id) {
+            await storage.remove(other.key);
+            discarded++;
+          }
+        rows = sorted(await storage.all());
+        client.onStatus(
+          rows.length,
+          client.ack,
+          "Collector rejected a recording; its saved batches were discarded",
+        );
+        continue;
+      }
       client.onStatus(rows.length, client.ack, "Uploading saved recording");
-      const ack = JSON.parse(
-        await request(client, (signal) =>
-          client.transport.send(row.body, signal),
-        ),
-      );
-      if (
-        ack.session_id !== batch.session.id ||
-        ack.ack !== batch.checkpoint.sequence + batch.entries.length
-      )
-        throw new Error("Invalid acknowledgement; saved batch retained");
+      try {
+        const ack = JSON.parse(
+          await request(client, (signal) =>
+            client.transport.send(row.body, signal),
+          ),
+        );
+        if (
+          ack.session_id !== batch.session.id ||
+          ack.ack !== batch.checkpoint.sequence + batch.entries.length
+        )
+          throw new Error("Invalid acknowledgement; saved batch retained");
+      } catch (error) {
+        if (error?.rejected !== true || client.stopped) throw error;
+        client.rejected.add(batch.session.id);
+        continue;
+      }
       if (client.stopped) break;
       await storage.remove(row.key);
       client.ack += batch.entries.length;
-      rows = await storage.all();
-      rows.sort((a, b) => a.key.localeCompare(b.key));
+      client.failures = 0;
+      rows = sorted(await storage.all());
     }
     if (!client.stopped)
       client.onStatus(
         rows.length,
         client.ack,
-        client.fault
-          ? "Capture stopped; saved entries delivered"
-          : "All saved entries delivered",
+        discarded
+          ? "Rejected recording discarded; other saved entries delivered"
+          : client.fault
+            ? "Capture stopped; saved entries delivered"
+            : "All saved entries delivered",
       );
   })()
     .catch(async (error) => {
+      failed = true;
       if (!client.stopped) {
         const count = await client.storage
           .then((s) => s.all())
@@ -247,7 +312,13 @@ export function retry(client) {
     })
     .finally(() => {
       client.busy = false;
-      if (!client.stopped) client.timer = setTimeout(() => retry(client), 1500);
+      if (client.stopped) return;
+      client.failures = failed ? client.failures + 1 : 0;
+      client.waiting = failed;
+      client.timer = setTimeout(
+        () => retry(client),
+        failed ? retryDelay(client.failures) : 1500,
+      );
     });
 }
 

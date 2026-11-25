@@ -7,11 +7,20 @@ import retrace_frontend/client/adapter
 
 pub type ProviderError {
   Unavailable(reason: String)
+  Refused(reason: String)
 }
 
 fn explain(error: ProviderError) -> String {
   case error {
     Unavailable(reason) -> "Provider: " <> reason
+    Refused(reason) -> "Refused: " <> reason
+  }
+}
+
+fn permanent(error: ProviderError) -> Bool {
+  case error {
+    Unavailable(_) -> False
+    Refused(_) -> True
   }
 }
 
@@ -26,7 +35,12 @@ pub fn storage(
 pub fn transport(
   send: fn(String) -> adapter.Task(String, ProviderError),
 ) -> client.Transport {
-  adapter.transport(open: open, send: send, explain: explain)
+  adapter.transport(
+    open: open,
+    send: send,
+    explain: explain,
+    rejected: permanent,
+  )
 }
 
 fn open(metadata: String) -> adapter.Task(String, ProviderError) {

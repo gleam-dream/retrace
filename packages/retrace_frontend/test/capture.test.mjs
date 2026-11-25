@@ -267,3 +267,31 @@ test("persistence failure remains visible and stops subsequent capture", async (
   assert.equal(capture.info(state).captured, 1);
   run(capture.stop(state), dispatch);
 });
+
+test("a collector that refuses to open the session stops capture visibly", async () => {
+  let state;
+  const refusal = Error("Collector rejected the recording (HTTP 400)");
+  refusal.rejected = true;
+  const [initial, connect] = capture.start_with_clock(
+    new Metadata("Ada", "build", "contract", "web"),
+    new Config("x", "x", 10, 10000),
+    async () => ({
+      all: async () => [],
+      put: async () => {},
+      remove: async () => {},
+    }),
+    {
+      open: async () => {
+        throw refusal;
+      },
+      send: refuse("must not upload"),
+    },
+    () => 0,
+  )[0];
+  state = initial;
+  const dispatch = (m) => (state = capture.update(state, m));
+  run(connect, dispatch);
+  await until(() => capture.info(state).failure[0]);
+  assert.match(capture.info(state).failure[0], /rejected/);
+  run(capture.stop(state), dispatch);
+});
