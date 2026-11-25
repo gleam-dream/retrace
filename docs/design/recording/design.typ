@@ -186,9 +186,17 @@
       #then[a failure stops capture visibly]
       #then[the application's effects are neither executed nor suppressed]
     ]
+    #behavior(title: "Capture groups the observations of a flush window", level: "boundary", area: "Capture composition")[
+      #given[an open session and a flush window]
+      #when[the application observes several accepted transitions before the window, the entry limit or the byte budget closes the batch]
+      #then[they are saved and uploaded as one batch whose checkpoint is the model before the first of them]
+      #then[the saved count rises by the number of entries once that batch is saved locally]
+      #then[a flush or stop saves the open batch at once, and a zero window saves each observation at once]
+    ]
     #points(
       [Capture coordinates the core recorder and client delivery through immutable state and Lustre effects. Starting takes session metadata and returns the state and a connection effect, and the application maps capture messages into its own message type. The connection effect starts the client and asks the collector to open the session; the client retries that request on its upload schedule until it is answered. Delivery messages are never observed recursively.],
-      [Observation takes the state before an accepted transition, the message and the safe encoders. It never runs the application reducer or effects. The adapter emits one checkpoint and event batch per observation.],
+      [Observation takes the state before an accepted transition, the message and the safe encoders. It never runs the application reducer or effects.],
+      [Capture uploads only batches, and the application chooses the flush window when it starts capture. A batch opens at an observation and closes when the window after it ends, at 128 entries, before an observation that would take it past half of the encoded batch limit, on an explicit flush and on stop. Its checkpoint is the model before its first observation, so the model is encoded and uploaded once per batch. A zero window closes every batch at its first observation. Held observations count as captured and not as saved, and are lost if the page ends before their batch closes. Replay ranges start at batch boundaries, so a longer window makes them coarser.],
       [Recording begins with the first transition observed after the session is open, and its first checkpoint is the state before that transition. Transitions observed earlier are not recorded, so the recording starts later instead of containing a gap. Invalid time and failed persistence stop capture visibly, and the application stays usable.],
       [The caller owns the client lifetime and stops capture before discarding its state. Retry repairs delivery only and never repairs a failed recording. A fresh session starts after a capture failure.],
       [Capture information reports the session once it is open, captured count, locally saved count, delivery status and optional failure. A per-session monotonic clock is supplied by default, and a clock can be injected for deterministic consumers.],

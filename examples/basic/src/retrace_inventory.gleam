@@ -31,6 +31,8 @@ fn init(_: Nil) -> #(Model, effect.Effect(Message)) {
       client.Config("http://127.0.0.1:4417", "basic-outbox", 100, 1_048_576),
       client.browser_storage(),
       client.http_transport("http://127.0.0.1:4417"),
+      // Upload the transitions of each second together, as one batch.
+      1000,
     )
   // snips-end: capture-start
   #(

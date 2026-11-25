@@ -72,6 +72,8 @@ async function withRecording(clock, body) {
     new Config("local", "adoption-outbox", 100, 1_048_576),
     delivery.storage,
     delivery.transport,
+    // No window: each accepted transition is checked as its own batch.
+    0,
     clock,
   );
   assert.ok(started.isOk());

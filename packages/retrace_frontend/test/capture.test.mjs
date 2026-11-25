@@ -49,6 +49,7 @@ test("failed projection never reaches codecs or delivery and stops capture witho
       throw Error("must not open");
     },
     { open: refuse("must not open"), send: refuse("must not upload") },
+    0,
     () => {
       throw Error("must not read clock");
     },
@@ -105,6 +106,7 @@ test("capture persists typed observations in order, keeps status out of history,
     new Config("local", "test", 10, 10000),
     async () => store,
     transport,
+    0,
     () => now,
   );
   assert(result.isOk());
@@ -183,6 +185,7 @@ test("capture records nothing until the collector has opened the session", async
         return JSON.stringify({ session_id: b.session.id, ack: 1 });
       },
     },
+    0,
     () => 3,
   )[0];
   const dispatch = (m) => (state = capture.update(state, m));
@@ -221,6 +224,7 @@ test("capture refuses invalid metadata before starting anything", () => {
       throw Error("must not open");
     },
     { open: refuse("must not open"), send: refuse("must not upload") },
+    0,
     () => 0,
   );
   assert.ok(!result.isOk());
@@ -240,6 +244,7 @@ test("persistence failure remains visible and stops subsequent capture", async (
     new Config("x", "x", 2, 10000),
     async () => store,
     collector(refuse("must not upload")),
+    0,
     () => 1,
   )[0];
   const dispatch = (m) => (state = capture.update(state, m));
@@ -270,7 +275,7 @@ test("persistence failure remains visible and stops subsequent capture", async (
 
 // Governing design: Capture coordination / Batched capture groups observations.
 const settle = () => new Promise((r) => setImmediate(r));
-function batched(batching, t) {
+async function batched(flushAfterMs, t) {
   t.mock.timers.enable({ apis: ["setTimeout"] });
   const rows = new Map(),
     received = [],
@@ -280,29 +285,35 @@ function batched(batching, t) {
     put: async (k, b) => rows.set(k, b),
     remove: async (k) => rows.delete(k),
   };
-  const transport = async (body) => {
+  const transport = collector(async (body) => {
     const b = JSON.parse(body);
     received.push(b);
     return JSON.stringify({
       session_id: b.session.id,
       ack: b.entries.at(-1).sequence,
     });
-  };
+  });
   const recording = { now: 0, received, encoded, state: null };
   let effect;
   [recording.state, effect] = capture.start_with_clock(
-    capture.session("Ada", "test-build", "test-v1", "web"),
+    new Metadata("Ada", "test-build", "test-v1", "web"),
     new Config("local", "batched", 100, 4000000),
     async () => store,
     transport,
+    flushAfterMs,
     () => recording.now,
   )[0];
-  if (batching)
-    recording.state = capture.with_batching(recording.state, batching);
   const dispatch = (m) =>
     (recording.state = capture.update(recording.state, m));
   recording.run = (e) => run(e, dispatch);
   recording.run(effect);
+  for (
+    let turn = 0;
+    turn < 20 && !capture.info(recording.state).session[0];
+    turn++
+  )
+    await settle();
+  assert.ok(capture.info(recording.state).session[0], "session opened");
   recording.observe = (before, event) => {
     recording.now++;
     [recording.state, effect] = capture.observe(
@@ -331,9 +342,8 @@ const shape = (received) =>
     b.entries.map((e) => e.sequence),
   ]);
 
-test("batched capture sends the observations of one window as one batch with one checkpoint", async (t) => {
-  const r = batched(new capture.Batching(1000, 64, 500000), t);
-  await settle();
+test("observations within the flush window are sent as one batch with one checkpoint", async (t) => {
+  const r = await batched(1000, t);
   r.observe({ value: 0 }, 2);
   r.observe({ value: 2 }, 3);
   r.observe({ value: 5 }, 4);
@@ -343,7 +353,7 @@ test("batched capture sends the observations of one window as one batch with one
   assert.deepEqual(r.received, []);
   await r.advance(1);
   assert.equal(capture.info(r.state).saved, 3);
-  // The window starts at the first buffered observation, not at each one.
+  // The window starts at the first held observation, not at each one.
   r.observe({ value: 9 }, 1);
   await r.advance(600);
   r.observe({ value: 10 }, 1);
@@ -359,46 +369,49 @@ test("batched capture sends the observations of one window as one batch with one
   r.run(capture.stop(r.state));
 });
 
-test("batched capture closes a batch at its entry and byte limits", async (t) => {
-  const byCount = batched(new capture.Batching(60000, 2, 500000), t);
+test("a zero flush window saves each observation at once as its own batch", async (t) => {
+  const r = await batched(0, t);
+  r.observe({ value: 0 }, 2);
+  r.observe({ value: 2 }, 3);
   await settle();
-  for (let n = 0; n < 5; n++) byCount.observe({ value: n }, 1);
+  await settle();
+  assert.deepEqual(shape(r.received), [
+    [0, '{"value":0}', [1]],
+    [1, '{"value":2}', [2]],
+  ]);
+  assert.equal(capture.info(r.state).saved, 2);
+  r.run(capture.stop(r.state));
+});
+
+test("a batch closes at the wire format's entry limit and before its byte budget", async (t) => {
+  const byCount = await batched(60000, t);
+  for (let n = 0; n < 130; n++) byCount.observe({ value: n }, 1);
   await settle();
   await settle();
   assert.deepEqual(
-    shape(byCount.received).map((b) => b[2]),
-    [
-      [1, 2],
-      [3, 4],
-    ],
+    byCount.received.map((b) => b.entries.length),
+    [128],
   );
   byCount.run(capture.stop(byCount.state));
   t.mock.timers.reset();
-  // An entry that would pass the byte limit starts the next batch instead.
-  const byBytes = batched(new capture.Batching(60000, 64, 600), t);
-  await settle();
-  const big = "x".repeat(150);
+  // An entry that would take the batch past half the wire limit starts the
+  // next batch with its own checkpoint.
+  const byBytes = await batched(60000, t);
+  const big = "x".repeat(200000);
   byBytes.observe({ value: 0 }, big);
   byBytes.observe({ value: 1 }, big);
   byBytes.observe({ value: 2 }, big);
   await settle();
   await settle();
-  assert.deepEqual(shape(byBytes.received), [[0, '{"value":0}', [1, 2]]]);
-  // The limits are clamped to what one wire batch can hold.
+  assert.deepEqual(
+    shape(byBytes.received).map((b) => [b[0], b[2]]),
+    [[0, [1, 2]]],
+  );
   byBytes.run(capture.stop(byBytes.state));
-  t.mock.timers.reset();
-  const clamped = batched(new capture.Batching(60000, 100000, 500000), t);
-  await settle();
-  for (let n = 0; n < 130; n++) clamped.observe({ value: n }, 1);
-  await settle();
-  await settle();
-  assert.equal(clamped.received[0].entries.length, 128);
-  clamped.run(capture.stop(clamped.state));
 });
 
-test("flush and stop save buffered observations without waiting for the window", async (t) => {
-  const r = batched(new capture.Batching(60000, 64, 500000), t);
-  await settle();
+test("flush and stop save held observations without waiting for the window", async (t) => {
+  const r = await batched(60000, t);
   r.observe({ value: 0 }, 1);
   r.run(capture.flush(r.state));
   await settle();
@@ -412,20 +425,6 @@ test("flush and stop save buffered observations without waiting for the window",
   // Stop saves the open batch locally; a later runtime uploads it.
   assert.equal(capture.info(r.state).saved, 3);
   assert.equal(r.received.length, 1);
-  // A flush with nothing buffered does nothing.
+  // A flush with nothing held does nothing.
   r.run(capture.flush(r.state));
-});
-
-test("capture without batching still sends one batch per observation", async (t) => {
-  const r = batched(null, t);
-  await settle();
-  r.observe({ value: 0 }, 2);
-  r.observe({ value: 2 }, 3);
-  await settle();
-  await settle();
-  assert.deepEqual(shape(r.received), [
-    [0, '{"value":0}', [1]],
-    [1, '{"value":2}', [2]],
-  ]);
-  r.run(capture.stop(r.state));
 });
