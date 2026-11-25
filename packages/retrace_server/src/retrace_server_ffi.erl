@@ -1,6 +1,11 @@
 -module(retrace_server_ffi).
--export([digest/1, compress/1, decompress/1, directory_put/3, directory_get/2, directory_remove/2, decompress_bounded/2]).
+-export([digest/1, same_digest/2, random_token/1, compress/1, decompress/1, directory_put/3, directory_get/2, directory_remove/2, decompress_bounded/2]).
 digest(Input) -> binary:encode_hex(crypto:hash(sha256, Input)).
+same_digest(Given, Expected) when byte_size(Given) =:= byte_size(Expected) ->
+    crypto:hash_equals(Given, Expected);
+same_digest(_, _) -> false.
+random_token(Bytes) ->
+    base64:encode(crypto:strong_rand_bytes(Bytes), #{mode => urlsafe, padding => false}).
 compress(Input) -> zlib:gzip(Input).
 decompress(Input) -> decompress_bounded(Input, 1048576).
 %% safeInflate emits bounded chunks, so a gzip bomb is rejected before its full

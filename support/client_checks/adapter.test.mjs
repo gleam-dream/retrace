@@ -12,7 +12,9 @@ import {
   Session,
   Batch,
   Event,
-  encode,
+  Metadata,
+  Upload,
+  encode_upload,
 } from "./build/dev/javascript/retrace/retrace/wire.mjs";
 import {
   Checkpoint,
@@ -90,14 +92,17 @@ function memory() {
   state.adapter = consumer.storage(() => success(state.store));
   return state;
 }
+const upload = (value = batch()) => new Upload("typed-token", value);
 const save = (runtime, value = batch()) =>
-  new Promise((resolve) => client.enqueue(runtime, value, resolve));
+  new Promise((resolve) => client.enqueue(runtime, upload(value), resolve));
+// The upload operation of a typed transport, called as the client calls it.
+const sender = (send) => consumer.transport(send).send;
 
 // Governing design: Client delivery / Typed client adapters preserve operation ownership.
 test("Gleam operations are cold, preserve exact bytes and first completion", async () => {
   let calls = 0,
     cancelled = 0;
-  const upload = consumer.transport((body) => {
+  const upload = sender((body) => {
     calls++;
     assert.equal(body, ' { "opaque": true }\n');
     return (reply) => {
@@ -115,7 +120,7 @@ test("Gleam operations are cold, preserve exact bytes and first completion", asy
   controller.abort();
   assert.equal(cancelled, 0);
   assert.equal(
-    await consumer.transport(consumer.immediate_receipt)(
+    await sender(consumer.immediate_receipt)(
       "Gleam deferred reply",
       new AbortController().signal,
     ),
@@ -125,26 +130,23 @@ test("Gleam operations are cold, preserve exact bytes and first completion", asy
 
 test("provider errors and throws settle; first result survives later throw", async () => {
   await assert.rejects(
-    consumer.transport(() => failure("offline"))(
-      "batch",
-      new AbortController().signal,
-    ),
+    sender(() => failure("offline"))("batch", new AbortController().signal),
     /Provider: offline/,
   );
   await assert.rejects(
-    consumer.transport(() => {
+    sender(() => {
       throw Error("construct");
     })("batch", new AbortController().signal),
     /construct/,
   );
   await assert.rejects(
-    consumer.transport(() => () => {
+    sender(() => () => {
       throw Error("execute");
     })("batch", new AbortController().signal),
     /execute/,
   );
   assert.equal(
-    await consumer.transport(() => (reply) => {
+    await sender(() => (reply) => {
       reply(Ok(receipt));
       throw Error("after completion");
     })("batch", new AbortController().signal),
@@ -157,7 +159,7 @@ test("pre-start and reentrant cancellation settle and cancel at most once", asyn
   before.abort();
   let started = 0;
   await assert.rejects(
-    consumer.transport(() => {
+    sender(() => {
       started++;
       return success(receipt);
     })("batch", before.signal),
@@ -167,7 +169,7 @@ test("pre-start and reentrant cancellation settle and cancel at most once", asyn
   const during = new AbortController();
   let cancelled = 0;
   await assert.rejects(
-    consumer.transport(() => (reply) => {
+    sender(() => (reply) => {
       during.abort();
       reply(Ok(receipt));
       return () => {
@@ -213,7 +215,7 @@ test("typed custom store gets queue settings; bad receipt retains identical byte
     assert.equal(settings[0].max_bytes, 10000);
     assert.equal(state.rows.size, 1);
     assert.equal(state.removes, 0);
-    assert.equal(sent[0], encode(batch()));
+    assert.equal(sent[0], encode_upload(upload()));
     valid = true;
     client.retry(runtime);
     await until(() => state.rows.size === 0);
@@ -370,6 +372,27 @@ test("storage startup/write/delete errors settle and preserve recovery", async (
   }
 });
 
+test("a typed transport opens the session the client asks for", async () => {
+  const runtime = client.start_with(
+    config(),
+    memory().adapter,
+    consumer.transport(() => success(receipt)),
+    () => {},
+  );
+  try {
+    const metadata = new Metadata("Warehouse", "build-1", "stock-v1", "web");
+    const grant = await new Promise((resolve) =>
+      client.open(runtime, metadata, resolve),
+    );
+    assert.ok(grant.isOk());
+    assert.equal(grant[0].session.id, "typed-session");
+    assert.equal(grant[0].session.user_ref, "Warehouse");
+    assert.equal(grant[0].token, "typed-token");
+  } finally {
+    client.stop(runtime);
+  }
+});
+
 test("typed transport classifies a permanent refusal; only that session is discarded", async () => {
   const state = memory(),
     statuses = [],
@@ -377,7 +400,7 @@ test("typed transport classifies a permanent refusal; only that session is disca
   const runtime = client.start_with(
     config(),
     state.adapter,
-    consumer.rejecting_transport((body) => {
+    consumer.transport((body) => {
       sent.push(body);
       return (reply) => {
         reply(ErrorResult(new consumer.Refused("session erased")));
@@ -400,7 +423,7 @@ test("typed transport classifies a permanent refusal; only that session is disca
   const retained = client.start_with(
     config(),
     kept.adapter,
-    consumer.rejecting_transport(() => failure("offline")),
+    consumer.transport(() => failure("offline")),
     (status) => statuses.push(status),
   );
   try {

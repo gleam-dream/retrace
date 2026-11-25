@@ -91,20 +91,41 @@ pub fn storage() -> client.Storage {
   )
 }
 
+const token_prefix = "retrace:advanced:token:"
+
+/// The archive is the collector here: it issues the session id and token, and
+/// admits only uploads that present the token it issued for their session.
 pub fn transport() -> client.Transport {
   adapter.transport(
-    fn(body) {
+    open: fn(metadata) {
       adapter.defer(fn() {
-        use batch <- result.try(
-          wire.decode_batch(body)
+        use metadata <- result.try(
+          wire.decode_metadata(metadata)
+          |> result.map_error(fn(_) { "Invalid session metadata" }),
+        )
+        let grant = wire.Grant(wire.session(random_id(), metadata), random_id())
+        use _ <- result.try(write(token_prefix <> grant.session.id, grant.token))
+        Ok(wire.encode_grant(grant))
+      })
+    },
+    send: fn(body) {
+      adapter.defer(fn() {
+        use upload <- result.try(
+          wire.decode_upload(body)
           |> result.map_error(fn(_) { "Invalid archive batch" }),
         )
+        let batch = upload.batch
+        use issued <- result.try(read(token_prefix <> batch.session.id))
+        use _ <- result.try(case issued == upload.token {
+          True -> Ok(Nil)
+          False -> Error("Upload does not carry its session's token")
+        })
         let key = archive_prefix <> batch.session.id
         use rows <- result.try(read_rows(key))
         use next <- result.try(insert(
           rows,
           int.to_string(batch.checkpoint.sequence),
-          body,
+          wire.encode(batch),
         ))
         use _ <- result.try(write_rows(key, next))
         Ok(
@@ -116,7 +137,9 @@ pub fn transport() -> client.Transport {
         )
       })
     },
-    fn(error) { error },
+    explain: fn(error) { error },
+    // Every archive failure is local and may pass, so each is retried.
+    rejected: fn(_) { False },
   )
 }
 
@@ -181,6 +204,9 @@ fn write(key: String, value: String) -> Result(Nil, String)
 
 @external(javascript, "../local_archive_ffi.mjs", "keys")
 fn keys() -> Result(List(String), String)
+
+@external(javascript, "../local_archive_ffi.mjs", "randomId")
+fn random_id() -> String
 
 @external(javascript, "../local_archive_ffi.mjs", "selected")
 pub fn selected() -> Bool

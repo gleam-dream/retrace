@@ -5,6 +5,7 @@ import gleam/int
 import gleam/io
 import gleam/list
 import gleam/string
+import opened
 import pog
 import retrace
 import retrace/wire
@@ -31,9 +32,10 @@ fn gzip_bomb() -> BitArray
 pub fn run(db: pog.Connection, store: server.ObjectStore, root: String) -> Nil {
   drain(db, store)
   reclaim(db, root)
-  let session = session("segment-boundaries")
+  let grant = opened.grant(db, "segment-boundaries")
+  let session = grant.session
   let assert Ok(#(recorder, _)) = retrace.start(wire.origin(session), "0")
-  let #(recorder, first) = append(db, session, recorder, 999, 128, "1")
+  let #(recorder, first) = append(db, grant, recorder, 999, 128, "1")
   let assert Ok(False) = server.archive_segment_next(db, store, 60)
   let assert Ok(True) = server.archive_segment_next(db, store, 0)
   reclaim(db, root)
@@ -47,7 +49,7 @@ pub fn run(db: pog.Connection, store: server.ObjectStore, root: String) -> Nil {
   let assert Ok(restored) =
     server.read_concurrent(db, measured, session.id, 0, 16)
   assert restored == first && count(reads) == 1
-  let #(recorder, next) = append(db, session, recorder, 1, 1, "1")
+  let #(recorder, next) = append(db, grant, recorder, 1, 1, "1")
   // Missing a superseded object retries fresh authoritative pointers once.
   let swapped = counter()
   let swap_store =
@@ -65,7 +67,7 @@ pub fn run(db: pog.Connection, store: server.ObjectStore, root: String) -> Nil {
   let expected = list.append(first, next)
   assert restored == expected && count(swapped) == 2
   assert list.length(keys(root, session.id)) == 1
-  let #(_, last) = append(db, session, recorder, 1, 1, "1")
+  let #(_, last) = append(db, grant, recorder, 1, 1, "1")
   let assert Ok(True) = server.archive_segment_next(db, store, 0)
   reclaim(db, root)
   assert list.length(keys(root, session.id)) == 2
@@ -79,13 +81,14 @@ pub fn run(db: pog.Connection, store: server.ObjectStore, root: String) -> Nil {
     server.read_concurrent(db, measured, session.id, 0, 16)
   assert restored == list.append(expected, last) && count(reads) == 2
   let assert Ok(original) = list.first(first)
-  let assert Ok(128) = server.accept(db, original)
+  let assert Ok(128) = server.accept(db, wire.Upload(grant.token, original))
   let changed =
     wire.Batch(
       ..original,
       checkpoint: retrace.Checkpoint(..original.checkpoint, model: "changed"),
     )
-  let assert Error(server.Conflict) = server.accept(db, changed)
+  let assert Error(server.Conflict) =
+    server.accept(db, wire.Upload(grant.token, changed))
   crossing_batch(db, store, root)
   failed_publication(db, store, root)
   concurrent_publication(db, store, root)
@@ -98,13 +101,9 @@ pub fn run(db: pog.Connection, store: server.ObjectStore, root: String) -> Nil {
   )
 }
 
-fn session(id: String) -> wire.Session {
-  wire.Session(id, "segment-check", "counter-v1", "counter-v1", "erlang")
-}
-
 fn append(
   db: pog.Connection,
-  session: wire.Session,
+  grant: wire.Grant,
   recorder: retrace.Recorder,
   remaining: Int,
   size: Int,
@@ -116,10 +115,9 @@ fn append(
       let n = int.min(remaining, size)
       let checkpoint = retrace.checkpoint(recorder, "0")
       let #(next, entries) = record(recorder, n, payload)
-      let batch = wire.Batch(session, checkpoint, entries)
-      let assert Ok(_) = server.accept(db, batch)
-      let #(last, tail) =
-        append(db, session, next, remaining - n, size, payload)
+      let batch = wire.Batch(grant.session, checkpoint, entries)
+      let assert Ok(_) = server.accept(db, wire.Upload(grant.token, batch))
+      let #(last, tail) = append(db, grant, next, remaining - n, size, payload)
       #(last, [batch, ..tail])
     }
   }
@@ -176,10 +174,11 @@ fn crossing_batch(
   store: server.ObjectStore,
   root: String,
 ) -> Nil {
-  let session = session("crossing-batch")
+  let grant = opened.grant(db, "crossing-batch")
+  let session = grant.session
   let assert Ok(#(recorder, _)) = retrace.start(wire.origin(session), "0")
-  let #(recorder, first) = append(db, session, recorder, 999, 128, "1")
-  let #(_, tail) = append(db, session, recorder, 128, 128, "1")
+  let #(recorder, first) = append(db, grant, recorder, 999, 128, "1")
+  let #(_, tail) = append(db, grant, recorder, 128, 128, "1")
   drain(db, store)
   reclaim(db, root)
   assert list.length(keys(root, session.id)) == 2
@@ -193,9 +192,10 @@ fn failed_publication(
   store: server.ObjectStore,
   root: String,
 ) -> Nil {
-  let session = session("failed-publication")
+  let grant = opened.grant(db, "failed-publication")
+  let session = grant.session
   let assert Ok(#(recorder, _)) = retrace.start(wire.origin(session), "0")
-  let #(_, batches) = append(db, session, recorder, 12, 1, "1")
+  let #(_, batches) = append(db, grant, recorder, 12, 1, "1")
   let fail =
     server.ObjectStore(
       fn(key, bytes) {
@@ -241,9 +241,10 @@ fn concurrent_publication(
   store: server.ObjectStore,
   root: String,
 ) -> Nil {
-  let session = session("concurrent-publication")
+  let grant = opened.grant(db, "concurrent-publication")
+  let session = grant.session
   let assert Ok(#(recorder, _)) = retrace.start(wire.origin(session), "0")
-  let #(_, _) = append(db, session, recorder, 8, 1, "1")
+  let #(_, _) = append(db, grant, recorder, 8, 1, "1")
   let entered = process.new_subject()
   let completed = process.new_subject()
   let blocking =
@@ -292,9 +293,10 @@ fn legacy_upgrade(
   store: server.ObjectStore,
   root: String,
 ) -> Nil {
-  let session = session("legacy-upgrade")
+  let grant = opened.grant(db, "legacy-upgrade")
+  let session = grant.session
   let assert Ok(#(recorder, _)) = retrace.start(wire.origin(session), "0")
-  let #(_, expected) = append(db, session, recorder, 130, 1, "1")
+  let #(_, expected) = append(db, grant, recorder, 130, 1, "1")
   list.each(list.repeat(Nil, 130), fn(_) {
     let assert Ok(True) = server.archive_next(db, store)
   })
@@ -347,10 +349,11 @@ fn oversized(
   store: server.ObjectStore,
   root: String,
 ) -> Nil {
-  let session = session("oversized-segment")
+  let grant = opened.grant(db, "oversized-segment")
+  let session = grant.session
   let assert Ok(#(recorder, _)) = retrace.start(wire.origin(session), "0")
   let #(_, expected) =
-    append(db, session, recorder, 38, 1, string.repeat("x", 900_000))
+    append(db, grant, recorder, 38, 1, string.repeat("x", 900_000))
   let assert Ok(True) = server.archive_segment_next(db, store, 0)
   assert keys(root, session.id) == []
   let assert Ok(False) = server.archive_segment_next(db, store, 0)
@@ -368,11 +371,12 @@ fn preparation_race(
   store: server.ObjectStore,
   root: String,
 ) -> Nil {
-  let session = session("preparation-race")
+  let grant = opened.grant(db, "preparation-race")
+  let session = grant.session
   let assert Ok(#(recorder, _)) = retrace.start(wire.origin(session), "0")
-  let #(recorder, first) = append(db, session, recorder, 100, 100, "1")
+  let #(recorder, first) = append(db, grant, recorder, 100, 100, "1")
   let assert Ok(True) = server.archive_segment_next(db, store, 0)
-  let #(recorder, second) = append(db, session, recorder, 100, 100, "1")
+  let #(recorder, second) = append(db, grant, recorder, 100, 100, "1")
   let entered = process.new_subject()
   let complete = process.new_subject()
   let calls = counter()
@@ -397,7 +401,7 @@ fn preparation_race(
   let admitted = process.new_subject()
   let _ =
     process.spawn(fn() {
-      process.send(admitted, append(db, session, recorder, 100, 100, "1"))
+      process.send(admitted, append(db, grant, recorder, 100, 100, "1"))
     })
   let assert Ok(#(recorder, third)) = process.receive(admitted, 1000)
   let replacement = process.new_subject()
@@ -414,7 +418,7 @@ fn preparation_race(
   assert restored == list.flatten([first, second, third])
   let assert Ok(False) = server.archive_segment_next(db, store, 0)
   // A fence also completes while preparation is waiting on a remote read.
-  let #(_, _) = append(db, session, recorder, 100, 100, "1")
+  let #(_, _) = append(db, grant, recorder, 100, 100, "1")
   let fenced_read = counter()
   let blocked =
     server.ObjectStore(store.put, fn(key) {
@@ -445,9 +449,10 @@ fn preparation_race(
 }
 
 fn inline_integrity(db: pog.Connection, store: server.ObjectStore) -> Nil {
-  let session = session("inline-integrity")
+  let grant = opened.grant(db, "inline-integrity")
+  let session = grant.session
   let assert Ok(#(recorder, _)) = retrace.start(wire.origin(session), "0")
-  let #(_, _) = append(db, session, recorder, 1, 1, "1")
+  let #(_, _) = append(db, grant, recorder, 1, 1, "1")
   let assert Ok(_) =
     pog.query(
       "UPDATE retrace_chunks SET payload=payload || ' ' WHERE session_id=$1",
