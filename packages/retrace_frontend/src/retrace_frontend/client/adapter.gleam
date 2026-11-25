@@ -56,29 +56,26 @@ pub fn storage(
   )
 }
 
-/// Construct an upload adapter. Send receives the exact encoded batch and
-/// returns the encoded acknowledgement. The client checks the receipt before
-/// removing anything from storage. Deadline and shutdown invoke pending task
+/// Construct a collector adapter. Open receives encoded session metadata and
+/// returns the encoded grant: a session id the collector chose and the write
+/// token it issued (`wire.encode_grant`). Send receives the exact encoded upload
+/// and returns the encoded acknowledgement. The client checks the grant and the
+/// receipt before using them. Deadline and shutdown invoke pending task
 /// cancellation; a late callback cannot turn cancellation into success.
+///
+/// `rejected` classifies a provider error as a permanent refusal that an
+/// identical retry cannot change. A refused upload ends delivery of its session
+/// from this client: the client discards that session's saved batches and goes
+/// on with the others. A refused open fails the capture that asked for it.
+/// Every other failure is retried with backoff. Return False for failures the
+/// host can repair, such as expired credentials.
 pub fn transport(
-  send: fn(String) -> Task(String, error),
-  explain: fn(error) -> String,
+  open open: fn(String) -> Task(String, error),
+  send send: fn(String) -> Task(String, error),
+  explain explain: fn(error) -> String,
+  rejected rejected: fn(error) -> Bool,
 ) -> client.Transport {
-  transport_bridge(send, explain, fn(_) { False })
-}
-
-/// Construct an upload adapter that also classifies its failures. A failure
-/// for which `rejected` returns True is a permanent refusal: an identical
-/// retry cannot succeed, so the client discards the saved batches of that
-/// session and continues with the others. Every other failure keeps the
-/// batch and is retried with backoff. Classify authorization failures as
-/// retryable when the host can repair its credentials.
-pub fn rejecting_transport(
-  send: fn(String) -> Task(String, error),
-  explain: fn(error) -> String,
-  rejected: fn(error) -> Bool,
-) -> client.Transport {
-  transport_bridge(send, explain, rejected)
+  transport_bridge(open, send, explain, rejected)
 }
 
 @external(javascript, "./adapter_ffi.mjs", "storage")
@@ -89,6 +86,7 @@ fn storage_bridge(
 
 @external(javascript, "./adapter_ffi.mjs", "transport")
 fn transport_bridge(
+  open: fn(String) -> Task(String, error),
   send: fn(String) -> Task(String, error),
   explain: fn(error) -> String,
   rejected: fn(error) -> Bool,

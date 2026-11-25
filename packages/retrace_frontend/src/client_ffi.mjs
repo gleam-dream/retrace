@@ -108,8 +108,10 @@ async function openStorage(name, maxItems, maxBytes) {
 }
 
 export const browserStorage = () => openStorage;
-// A refusal that an identical retry cannot change. Authorization failures are
-// excluded: the host may repair credentials, and they affect every batch alike.
+// A refusal that an identical retry cannot change. Only the session's own
+// writer can reach its session, so such a refusal is this client's to settle.
+// Authorization, timeout and throttling failures are excluded: the host may
+// repair credentials or capacity, and they affect every session alike.
 const rejects = (status) =>
   status >= 400 &&
   status < 500 &&
@@ -120,25 +122,32 @@ const retryDelay = (failures) => {
   const step = Math.min(60000, 1500 * 2 ** Math.min(failures - 1, 16));
   return Math.round(step / 2 + (Math.random() * step) / 2);
 };
-// Transport returns an acknowledgement JSON string. Runtime owns its deadline.
-// It marks a permanent refusal by throwing an Error whose `rejected` is true.
-export const httpTransport = (endpoint) => async (body, signal) => {
-  const response = await fetch(`${endpoint.replace(/\/$/, "")}/batches`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body,
-    signal,
-  });
-  if (!response.ok) {
-    const error = Error(
-      rejects(response.status)
-        ? `Collector rejected the recording (HTTP ${response.status})`
-        : "Collector unavailable; retrying",
-    );
-    error.rejected = rejects(response.status);
-    throw error;
-  }
-  return response.text();
+// A transport opens sessions and uploads batches; each returns the collector's
+// JSON reply. The runtime owns deadlines. A transport marks a permanent
+// refusal by throwing an Error whose `rejected` is true.
+export const httpTransport = (endpoint) => {
+  const post = async (path, body, signal) => {
+    const response = await fetch(`${endpoint.replace(/\/$/, "")}${path}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body,
+      signal,
+    });
+    if (!response.ok) {
+      const error = Error(
+        rejects(response.status)
+          ? `Collector rejected the recording (HTTP ${response.status})`
+          : "Collector unavailable; retrying",
+      );
+      error.rejected = rejects(response.status);
+      throw error;
+    }
+    return response.text();
+  };
+  return {
+    open: (metadata, signal) => post("/sessions", metadata, signal),
+    send: (body, signal) => post("/batches", body, signal),
+  };
 };
 export function start(endpoint, name, maxItems, maxBytes, onStatus) {
   return startWith(
@@ -178,6 +187,7 @@ export function startWith(name, maxItems, maxBytes, onStatus, open, transport) {
     saved: 0,
     reported: [],
     rejected: new Set(),
+    opening: null,
   };
   client.storage = valid
     ? Promise.resolve().then(() => open(name, maxItems, maxBytes))
@@ -232,6 +242,26 @@ export function enqueue(client, body, saved) {
     });
 }
 
+// The open request is retried by every upload pass until it is answered.
+export function openSession(client, metadata, opened) {
+  if (client.stopped) return;
+  client.opening = { metadata, opened };
+  retry(client);
+}
+
+// Runs one request under the five-second deadline and the abort controller
+// that shutdown cancels.
+async function request(client, send) {
+  client.controller = new AbortController();
+  const timeout = setTimeout(() => client.controller?.abort(), 5000);
+  try {
+    return await send(client.controller.signal);
+  } finally {
+    clearTimeout(timeout);
+    client.controller = null;
+  }
+}
+
 const sorted = (rows) => rows.sort((a, b) => a.key.localeCompare(b.key));
 const sessionOf = (row) => JSON.parse(row.body).session.id;
 // Report a status only when it differs from the last one reported.
@@ -260,6 +290,26 @@ export function retry(client) {
   (async () => {
     const storage = await client.storage;
     let discarded = 0;
+    if (client.opening && !client.stopped) {
+      const { metadata, opened } = client.opening;
+      report(client, client.reported[0] ?? 0, "Opening recording session");
+      let grant;
+      try {
+        grant = await request(client, (signal) =>
+          client.transport.open(metadata, signal),
+        );
+      } catch (error) {
+        // A refused request cannot be repaired by sending it again.
+        if (error?.rejected !== true || client.stopped) throw error;
+        client.opening = null;
+        opened(false, error.message);
+      }
+      if (client.stopped) return;
+      if (grant !== undefined) {
+        client.opening = null;
+        opened(true, grant);
+      }
+    }
     for (;;) {
       client.saved = 0;
       const rows = sorted(await storage.all());
@@ -277,11 +327,11 @@ export function retry(client) {
         const batch = JSON.parse(row.body);
         if (!client.rejected.has(batch.session.id)) {
           report(client, left() + 1, "Uploading saved recording");
-          client.controller = new AbortController();
-          const timeout = setTimeout(() => client.controller?.abort(), 5000);
           try {
             const ack = JSON.parse(
-              await client.transport(row.body, client.controller.signal),
+              await request(client, (signal) =>
+                client.transport.send(row.body, signal),
+              ),
             );
             if (
               ack.session_id !== batch.session.id ||
@@ -291,9 +341,6 @@ export function retry(client) {
           } catch (error) {
             if (error?.rejected !== true || client.stopped) throw error;
             client.rejected.add(batch.session.id);
-          } finally {
-            clearTimeout(timeout);
-            client.controller = null;
           }
           if (client.stopped) return;
           if (!client.rejected.has(batch.session.id)) {

@@ -6,6 +6,8 @@ import gleam/erlang/process
 import gleam/io
 import gleam/list
 import gleam/option.{None, Some}
+import identity_checks
+import opened
 import pog
 import quiescence_checks
 import retrace
@@ -21,8 +23,9 @@ pub fn main() {
   let assert Ok(started) = pog.start(config)
   let db = started.data
   let assert Ok(_) = server.migrate(db)
-  let session =
-    wire.Session("fault-check", "example", "counter-v1", "counter-v1", "erlang")
+  let grant = opened.grant(db, "example")
+  let session = grant.session
+  let upload = fn(batch) { wire.Upload(grant.token, batch) }
   let assert Ok(#(recorder, checkpoint)) =
     retrace.start(wire.origin(session), "0")
   let assert Ok(#(_, entry)) =
@@ -32,7 +35,7 @@ pub fn main() {
     server.ObjectStore(fn(_, _) { Error(server.Unavailable) }, fn(_) {
       Error(server.Unavailable)
     })
-  let assert Ok(1) = server.accept(db, batch)
+  let assert Ok(1) = server.accept(db, upload(batch))
   let assert Error(server.Storage(server.Unavailable)) =
     server.archive_next(db, failing)
   let assert Ok([restored]) = server.read(db, failing, session.id, 0)
@@ -50,12 +53,12 @@ pub fn main() {
   let corrupt = server.ObjectStore(store.put, fn(_) { Ok(<<1, 2, 3>>) })
   let assert Error(server.CorruptArchive) =
     server.read(db, corrupt, session.id, 0)
-  let assert Ok(1) = server.accept(db, batch)
+  let assert Ok(1) = server.accept(db, upload(batch))
   let remove = fn(key) { directory.remove(root, key) }
   let eraser = server.Eraser(remove, fn(_) { server.MayPublish })
   let assert Error(server.Conflict) = server.erase(db, eraser, session.id)
   let assert Ok(_) = server.fence(db, session.id)
-  let assert Error(server.Deleted) = server.accept(db, batch)
+  let assert Error(server.Deleted) = server.accept(db, upload(batch))
   let assert Error(server.Deleted) = server.read(db, store, session.id, 0)
   let assert Ok([]) = server.sessions(db, "example")
   let assert Ok(False) = server.archive_next(db, store)
@@ -69,7 +72,7 @@ pub fn main() {
   let assert Ok(all) = server.write_attempts(db, session.id, 10)
   let assert [attempt] =
     list.filter(all, fn(found) { found.state != server.Completed })
-  assert attempt.object_key == "sessions/fault-check/0.json.gz"
+  assert attempt.object_key == opened.key(session, "0")
   assert attempt.state == server.Failed
   // The directory adapter proves a returned failure quiescent.
   let proving = server.Eraser(remove, directory.quiesced)
@@ -80,12 +83,12 @@ pub fn main() {
       session.id,
     )
   let assert Ok(server.Erased) = server.erase(db, proving, session.id)
-  let assert Error(server.Missing) = store.get("sessions/fault-check/0.json.gz")
+  let assert Error(server.Missing) = store.get(opened.key(session, "0"))
   // Simulate an uncertain late PUT after the first cleanup. Retained keys permit
   // reconciliation even though the recording rows have already been erased.
-  let assert Ok(_) = store.put("sessions/fault-check/0.json.gz", <<1>>)
+  let assert Ok(_) = store.put(opened.key(session, "0"), <<1>>)
   let assert Ok(_) = server.erase(db, eraser, session.id)
-  let assert Error(server.Missing) = store.get("sessions/fault-check/0.json.gz")
+  let assert Error(server.Missing) = store.get(opened.key(session, "0"))
   let assert Ok(_) = server.fence(db, "never-admitted")
   let assert Ok(Some(#("never-admitted", server.Erased))) =
     server.erase_next(db, eraser, 3600)
@@ -93,29 +96,31 @@ pub fn main() {
   concurrent_read_checks.run(db, store)
   bounded_check(db, remove)
   race_check(db, store, remove)
-  let unadmitted = sample("never-admitted")
+  let unadmitted = sample(db)
+  let assert Ok(_) = server.fence(db, unadmitted.batch.session.id)
   let assert Error(server.Deleted) = server.accept(db, unadmitted)
+  let rolled_back = sample(db)
   let assert Error(pog.TransactionRolledBack(Nil)) =
     pog.transaction(db, fn(tx) {
-      let assert Ok(1) = server.accept_in_transaction(tx, sample("rolled-back"))
+      let assert Ok(1) = server.accept_in_transaction(tx, rolled_back)
       Error(Nil)
     })
-  let assert Ok([]) = server.read(db, store, "rolled-back", 0)
+  let assert Ok([]) = server.read(db, store, rolled_back.batch.session.id, 0)
   segment_checks.run(db, store, root)
   quiescence_checks.run(db)
+  identity_checks.run(db)
   io.println(
-    "PASS archival failure/recovery, integrity, bounded erasure, deletion retry, active archive fence, pre-admission fence, late PUT reconciliation and caller transaction rollback",
+    "PASS single writer per issued session, archival failure/recovery, integrity, bounded erasure, deletion retry, active archive fence, pre-admission fence, late PUT reconciliation and caller transaction rollback",
   )
 }
 
-fn sample(id: String) -> wire.Batch {
-  let session =
-    wire.Session(id, "race-principal", "counter-v1", "counter-v1", "erlang")
+fn sample(db: pog.Connection) -> wire.Upload {
+  let grant = opened.grant(db, "race-principal")
   let assert Ok(#(recorder, checkpoint)) =
-    retrace.start(wire.origin(session), "0")
+    retrace.start(wire.origin(grant.session), "0")
   let assert Ok(#(_, entry)) =
     retrace.record(recorder, wire.Event("Add", "1"), 5)
-  wire.Batch(session, checkpoint, [entry])
+  wire.Upload(grant.token, wire.Batch(grant.session, checkpoint, [entry]))
 }
 
 fn race_check(
@@ -123,8 +128,9 @@ fn race_check(
   store: server.ObjectStore,
   remove: fn(String) -> Result(Nil, server.StorageError),
 ) -> Nil {
-  let batch = sample("racing-archive")
-  let assert Ok(1) = server.accept(db, batch)
+  let upload = sample(db)
+  let batch = upload.batch
+  let assert Ok(1) = server.accept(db, upload)
   let entered = process.new_subject()
   let archived = process.new_subject()
   let blocking =
@@ -158,9 +164,8 @@ fn race_check(
       server.Eraser(remove, fn(_) { server.MayPublish }),
       batch.session.id,
     )
-  let assert Error(server.Missing) =
-    store.get("sessions/racing-archive/0.json.gz")
-  let assert Error(server.Deleted) = server.accept(db, batch)
+  let assert Error(server.Missing) = store.get(opened.key(batch.session, "0"))
+  let assert Error(server.Deleted) = server.accept(db, upload)
   Nil
 }
 
@@ -168,16 +173,10 @@ fn bounded_check(
   db: pog.Connection,
   remove: fn(String) -> Result(Nil, server.StorageError),
 ) -> Nil {
-  let session =
-    wire.Session(
-      "many-batches",
-      "example",
-      "counter-v1",
-      "counter-v1",
-      "erlang",
-    )
+  let grant = opened.grant(db, "example")
+  let session = grant.session
   let assert Ok(#(recorder, _)) = retrace.start(wire.origin(session), "0")
-  append_batches(db, session, recorder, 9)
+  append_batches(db, grant, recorder, 9)
   let assert Ok(_) = server.fence(db, session.id)
   let eraser = server.Eraser(remove, fn(_) { server.MayPublish })
   let assert Ok(server.Erasing) = server.erase(db, eraser, session.id)
@@ -187,7 +186,7 @@ fn bounded_check(
 
 fn append_batches(
   db: pog.Connection,
-  session: wire.Session,
+  grant: wire.Grant,
   recorder: retrace.Recorder,
   left: Int,
 ) -> Nil {
@@ -198,8 +197,14 @@ fn append_batches(
       let assert Ok(#(next, entry)) =
         retrace.record(recorder, wire.Event("Add", "1"), 5)
       let assert Ok(_) =
-        server.accept(db, wire.Batch(session, checkpoint, [entry]))
-      append_batches(db, session, next, left - 1)
+        server.accept(
+          db,
+          wire.Upload(
+            grant.token,
+            wire.Batch(grant.session, checkpoint, [entry]),
+          ),
+        )
+      append_batches(db, grant, next, left - 1)
     }
   }
 }

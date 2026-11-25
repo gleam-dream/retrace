@@ -28,7 +28,7 @@
       #then[the final state and absolute sequence can be inspected and compared with a supplied checkpoint]
     ]
     #points(
-      [A #term("term-session") has an immutable ID, user reference, build, platform and #term("term-replay-contract"). Multiple devices or tabs use distinct session IDs. The user reference is searchable metadata and never authorization.],
+      [A #term("term-session") has an immutable ID, user reference, build, platform and #term("term-replay-contract"). The server chooses the ID when it opens the session and issues a #term("term-write-token") with it, so each device or tab records into a session of its own. The user reference is searchable metadata and never authorization. #adr(22)],
       [A #term("term-recording-cursor") owns sequence and elapsed-time monotonicity. An #term("term-entry") advances it once, including a message that changes no state. A #term("term-checkpoint") starts reconstruction at its declared cursor.],
       [Start validates identity, record increments the sequence and returns an immutable entry, and resume validates a supplied cursor. The caller recovers its matching outbox and state before resuming.],
       [Compatibility checks prove neither reducer equivalence nor checkpoint authenticity. The application owns both claims.],
@@ -40,6 +40,7 @@
       [A #term("term-batch") holds immutable session metadata, a checkpoint and 1–128 contiguous entries. Its encoded size is at most one MiB. Its checkpoint precedes its entries, and every origin matches its session.],
       [Application payloads travel as bounded JSON strings, so the collector imports no application types. JSON decoding does not prove the validity of the application's model or event.],
       [Transport format version and application replay compatibility are separate. Session IDs are unique per recording.],
+      [An upload is a batch presented with its session's #term("term-write-token"). The token travels beside the batch and is never part of it, so a stored or read batch cannot reveal it.],
       [An application may group up to 128 entries in one batch to reduce request and object counts. It supplies the checkpoint that precedes the group.],
     )
   ])
@@ -54,7 +55,7 @@
         domain: "recording",
         tint: "teal",
       )[
-        #attribute(name: "Identifier", type: "Session identifier", provenance: "authored")[the identifier that is unique per recording and independent of the user reference]
+        #attribute(name: "Identifier", type: "Session identifier", provenance: "derived")[the identifier the server chooses when it opens the session, unique per recording and independent of the user reference]
         #attribute(name: "User reference", type: "User reference", provenance: "authored")[searchable metadata that never authorizes access]
         #attribute(name: "Build identity", type: "Build identity", provenance: "authored")[the identity of the application build that recorded the session]
         #attribute(name: "Replay contract", type: "Replay contract identifier", provenance: "authored")[the application's compatibility identifier for its schemas and reducer semantics]
@@ -152,7 +153,8 @@
       [The upload loop runs only while there is work. A local save, an explicit retry request and the end of a backoff wait start a pass, and a client with an empty queue holds no timer. A pass reads the store once, uploads that snapshot in key order and reads again only to pick up batches saved meanwhile, so draining reads each saved batch once.],
       [The IndexedDB store keeps the encoded size of each saved row in memory and reconciles that index with the store's keys inside every save transaction. A save therefore checks both caps without reading the saved bodies, and a row added or removed by another writer is still counted exactly.],
       [A failed upload pass keeps its batch and waits before the next pass. The wait doubles with each consecutive failure from 1.5 seconds up to a cap of 60 seconds, and a random part of up to half of it is removed so that clients do not retry together. A batch saved during the wait is uploaded by the next pass and does not shorten the wait. A delivered batch resets the wait, and an explicit retry request starts a pass at once.],
-      [A #term("term-rejection") is a refusal that an identical retry cannot change. The packaged HTTP transport reports one for a 4xx response other than 401, 403, 407, 408, 425 and 429. After a rejection the collector cannot admit a later batch of that session contiguously, so the client discards every saved batch of that session, reports the discard as a status, continues with the other sessions and refuses further capture for the rejected session. Authorization, timeout and throttling responses, server errors, network failures and invalid acknowledgements keep the batch.],
+      [A #term("term-rejection") is a refusal that an identical retry cannot change. The packaged HTTP transport reports one for a 4xx response other than 401, 403, 407, 408, 425 and 429. Only the writer that opened a session can upload to it, so a rejection of an upload is caused by this client or by erasure of the session, never by another writer. #adr(22) After a rejection the collector cannot admit a later batch of that session contiguously, so the client discards every saved batch of that session, reports the discard as a status, continues with the other sessions and refuses further capture for the rejected session. A rejected request to open a session fails the capture that made it.],
+      [Authorization, timeout and throttling responses, server errors, network failures and invalid acknowledgements keep the batch. Authorization failures stay retryable because they concern the host's credentials, which the host can repair and which every session shares; the write token, which only this client holds, is checked by admission and a mismatch is answered as a missing session.],
       [A client runtime has one writer and one sequential upload loop. Each page instance starts a fresh session and still drains durable batches left by earlier instances. Duplicate uploads from overlapping runtimes are safe on the server.],
       [Browser persistence defaults to IndexedDB. Tauri uses an explicitly selected native store adapter, and a browser-only build needs no Tauri plugin. Tauri assumes one writing window per queue and provides no cross-process locking.],
       [The #term("term-delivery-queue") caps pending capture and durable storage independently by item count and encoded bytes. Both caps together admit up to twice the encoded-payload budget plus metadata, encoding temporaries and storage-engine overhead. The caps are not a process heap limit.],
@@ -168,7 +170,7 @@
         [The bridge observes only the first completion, turns provider throws into failures, and ignores late replies. It starts no scheduler or retry loop and takes no ownership of resources. #adr(7)],
         [Storage operations must settle, and their cancellation callbacks are never invoked because admitted writes and deletions finish after shutdown. The caller releases storage resources after those operations settle.],
         [A put must enforce durable item and UTF-8-byte limits atomically, accept identical retries, reject conflicting content, and reply only after saving. Multiple writers are coordinated by the storage implementation.],
-        [Upload receives the exact encoded batch and returns the acknowledgement as encoded JSON, so byte identity is preserved and the application may interpret the batch with the wire module. A custom transport honors cancellation and rejects unsuccessful responses. A typed transport may supply a predicate that classifies a provider error as a #term("term-rejection"), and a foreign transport marks one by throwing an error whose `rejected` property is true. An unclassified failure is retried.],
+        [Opening receives encoded session metadata and returns the encoded grant: the session the collector opened and its #term("term-write-token"). The client accepts a grant only for the metadata it asked for. Upload receives the exact encoded upload and returns the acknowledgement as encoded JSON, so byte identity is preserved and the application may interpret the upload with the wire module. A custom transport honors cancellation and rejects unsuccessful responses. A typed transport supplies a predicate that classifies a provider error as a #term("term-rejection"), and a foreign transport marks one by throwing an error whose `rejected` property is true. An unclassified failure is retried.],
         [Provider error types stay in application callbacks until the selected formatter produces string diagnostics. Authentication headers never enter recorded events.],
       )
       #md-table(2,
@@ -177,11 +179,12 @@
          [Store listing], [Returns every saved row, each carrying an opaque queue key and an encoded batch body],
          [Store put], [Saves one row and replies after saving],
          [Store remove], [Removes one row by key],
-         [Upload], [Sends the encoded batch and returns the acknowledgement JSON],
+         [Open session], [Sends encoded session metadata and returns the grant JSON],
+         [Upload], [Sends the encoded upload and returns the acknowledgement JSON],
          [Error formatter], [Converts a provider error into a diagnostic string],
         ))
       #points(
-        [Existing opaque JavaScript adapters remain valid. A foreign storage opens a store from a name and two caps and exposes asynchronous listing, put and remove. A foreign transport takes an encoded batch and an abort signal and returns the acknowledgement JSON.],
+        [Existing opaque JavaScript adapters remain valid. A foreign storage opens a store from a name and two caps and exposes asynchronous listing, put and remove. A foreign transport has an open and a send operation; each takes an encoded body and an abort signal and returns the reply JSON.],
       )
     ]
   ])
@@ -201,11 +204,11 @@
       #then[the application's effects are neither executed nor suppressed]
     ]
     #points(
-      [Capture coordinates the core recorder and client delivery through immutable state and Lustre effects. Starting returns the state and a connection effect, and the application maps capture messages into its own message type. Delivery messages are never observed recursively.],
+      [Capture coordinates the core recorder and client delivery through immutable state and Lustre effects. Starting takes session metadata and returns the state and a connection effect, and the application maps capture messages into its own message type. The connection effect starts the client and asks the collector to open the session; the client retries that request on its upload schedule until it is answered. Delivery messages are never observed recursively.],
       [Observation takes the state before an accepted transition, the message and the safe encoders. It never runs the application reducer or effects. The adapter emits one checkpoint and event batch per observation.],
-      [Capture requires a prior connection. Observing before connection stops capture visibly instead of introducing a silent history gap. Invalid time and failed persistence also stop capture visibly, and the application stays usable.],
+      [Recording begins with the first transition observed after the session is open, and its first checkpoint is the state before that transition. Transitions observed earlier are not recorded, so the recording starts later instead of containing a gap. Invalid time and failed persistence stop capture visibly, and the application stays usable.],
       [The caller owns the client lifetime and stops capture before discarding its state. Retry repairs delivery only and never repairs a failed recording. A fresh session starts after a capture failure.],
-      [Capture information reports the session, captured count, locally saved count, delivery status and optional failure. A per-session monotonic clock and random session ID are supplied by default, and a clock can be injected for deterministic consumers.],
+      [Capture information reports the session once it is open, captured count, locally saved count, delivery status and optional failure. A per-session monotonic clock is supplied by default, and a clock can be injected for deterministic consumers.],
       [The results of effects, such as a native reply, are recorded as ordinary messages. Time and randomness values that affect state are recorded in events. Only transitions that cannot affect the replay model may be omitted, because an omitted meaningful transition makes later checkpoints inconsistent.],
       [The opt-in `observe_projected` helper accepts the application's fallible projection of a safe pre-transition checkpoint and safe event. Only successful projections reach the encoders and the ordinary capture path. Projection failure preserves the cursor, stops capture and reports a fixed diagnostic without retaining the application's error. Existing `observe` callers retain their contract.],
       [Privacy classification and projection belong to the application. Protected fields may retain presence without text, while observations retain the accepted validation, outcomes, loading, locking and presentation decisions needed by the shared view. An annotation cannot establish privacy. No raw recording copy, private sidecar or viewer-only redaction is created.],

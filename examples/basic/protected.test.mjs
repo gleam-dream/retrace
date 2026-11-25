@@ -11,7 +11,10 @@ import * as observation from "./build/dev/javascript/retrace_inventory/protected
 import * as capture from "./build/dev/javascript/retrace_frontend/retrace_frontend/capture.mjs";
 import { Config } from "./build/dev/javascript/retrace_frontend/retrace_frontend/client.mjs";
 import { load } from "./build/dev/javascript/retrace_frontend/retrace_frontend/replay.mjs";
-import { decode_batch } from "./build/dev/javascript/retrace/retrace/wire.mjs";
+import {
+  decode_batch,
+  Metadata,
+} from "./build/dev/javascript/retrace/retrace/wire.mjs";
 import { perform } from "./build/dev/javascript/lustre/lustre/effect.mjs";
 import { to_string } from "./build/dev/javascript/lustre/lustre/element.mjs";
 import { None } from "./build/dev/javascript/gleam_stdlib/gleam/option.mjs";
@@ -49,7 +52,7 @@ async function recordScenario() {
     uploaded = [],
     rows = new Map();
   [state, effect] = capture.start_with_clock(
-    capture.session(
+    new Metadata(
       "opaque-reference",
       observation.build,
       observation.contract,
@@ -64,13 +67,20 @@ async function recordScenario() {
       },
       remove: async (key) => void rows.delete(key),
     }),
-    async (body) => {
-      uploaded.push(body);
-      const batch = JSON.parse(body);
-      return JSON.stringify({
-        session_id: batch.session.id,
-        ack: batch.entries.at(-1).sequence,
-      });
+    {
+      open: async (metadata) =>
+        JSON.stringify({
+          session: { id: "protected-session", ...JSON.parse(metadata) },
+          token: "protected-token",
+        }),
+      send: async (body) => {
+        uploaded.push(body);
+        const batch = JSON.parse(body);
+        return JSON.stringify({
+          session_id: batch.session.id,
+          ack: batch.entries.at(-1).sequence,
+        });
+      },
     },
     () => clock,
   )[0];
@@ -78,6 +88,7 @@ async function recordScenario() {
     state = capture.update(state, message);
   };
   run(effect, dispatch);
+  await until(() => capture.info(state).session[0]);
   let model = live.initial();
   const expected = [live.project(model)[0]];
   const commands = [];

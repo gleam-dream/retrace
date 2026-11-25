@@ -5,6 +5,7 @@ import lustre/attribute
 import lustre/effect
 import lustre/element
 import lustre/element/html
+import retrace/wire
 import retrace_frontend/capture
 import retrace_frontend/client
 import retrace_inventory/domain
@@ -21,11 +22,12 @@ type Message {
 
 fn init(_: Nil) -> #(Model, effect.Effect(Message)) {
   // snips-start: capture-start
-  let session =
-    capture.session("Warehouse", domain.build, domain.contract, "web")
+  // The collector chooses the session id when it opens the session.
+  let metadata =
+    wire.Metadata("Warehouse", domain.build, domain.contract, "web")
   let assert Ok(#(recording, connect)) =
     capture.start(
-      session,
+      metadata,
       client.Config("http://127.0.0.1:4417", "basic-outbox", 100, 1_048_576),
       client.browser_storage(),
       client.http_transport("http://127.0.0.1:4417"),
@@ -90,8 +92,7 @@ fn view(model: Model) -> element.Element(Message) {
       html.a(
         [
           attribute.href(
-            "/viewer.html?user=Warehouse&session="
-            <> capture.info(model.capture).session.id,
+            "/viewer.html?user=Warehouse&session=" <> session_id(model.capture),
           ),
         ],
         [
@@ -100,6 +101,13 @@ fn view(model: Model) -> element.Element(Message) {
       ),
     ]),
   ])
+}
+
+fn session_id(recording: capture.State) -> String {
+  case capture.info(recording).session {
+    Some(session) -> session.id
+    None -> ""
+  }
 }
 
 pub fn main() -> fn() -> Nil {

@@ -26,7 +26,8 @@ operations explicitly:
 | Operation                          | Responsibility                                                                                                                           |
 | ---------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
 | `migrate`                          | Create the initial schema; the host chooses when to run it                                                                               |
-| `accept`                           | Validate and commit a batch atomically before returning its acknowledgement cursor                                                       |
+| `open`                             | Open a session for its metadata and return the server-chosen id with the write token only its writer holds                               |
+| `accept`                           | Validate an upload, prove its token against its session, and commit the batch atomically before returning its acknowledgement cursor     |
 | `sessions`                         | List the latest 100 sessions, optionally filtered by user reference                                                                      |
 | `read`                             | Read bounded pages serially in the calling process, validating their contents                                                            |
 | `read_concurrent`                  | Read the same ordered pages with an explicitly bounded number of independent adapter calls                                               |
@@ -35,6 +36,12 @@ operations explicitly:
 | `reclaim_next`                     | Delete at most eight unreferenced retired generations                                                                                    |
 | `fence`, `erase`                   | Refuse a session, then delete its objects and recording rows on caller authority; the result is `Erasing`, `AwaitingWriters` or `Erased` |
 | `erasure_status`, `write_attempts` | Read erasure progress, and list a session's upload attempts with their states                                                            |
+
+Authenticate the caller before `open`, and take the user reference from that
+authentication where it matters. The token in `open`'s grant is the only proof
+that later uploads come from the session's writer; the server stores only its
+digest. An upload without the matching token is `Unauthorized` and leaves the
+session unchanged, so anyone who can read a session still cannot append to it.
 
 `retrace_server/s3` adapts S3-compatible storage with `bucket.Credentials`, and
 `retrace_server/directory` provides local filesystem storage. Supply your own

@@ -32,16 +32,25 @@ const accepted = (task) =>
   });
 const clear = () => Object.keys(stored).forEach((key) => delete stored[key]);
 
-const batch = (id, user, checkpoint, sequences) =>
+const signal = () => new AbortController().signal;
+// The archive issues the session id and the token every upload must carry.
+const open = async (upload, user) =>
+  JSON.parse(
+    await upload.open(
+      JSON.stringify({
+        user_ref: user,
+        build: "release",
+        contract: "membership-screen-v2",
+        platform: "web",
+      }),
+      signal(),
+    ),
+  );
+const batch = (grant, checkpoint, sequences, token = grant.token) =>
   JSON.stringify({
+    token,
     format: 1,
-    session: {
-      id,
-      user_ref: user,
-      build: "release",
-      contract: "membership-screen-v2",
-      platform: "web",
-    },
+    session: grant.session,
     checkpoint: {
       sequence: checkpoint,
       elapsed_ms: checkpoint * 100,
@@ -78,24 +87,27 @@ test("storage enforces the queue's byte bound", async () => {
   await assert.rejects(open.put("b", "6789"), /Recording queue is full/);
 });
 
-test("upload stores each batch under its session and returns a validated receipt", async () => {
+test("upload stores each batch under its issued session and returns a validated receipt", async () => {
   clear();
   const upload = archive.transport();
-  const first = batch("s1", "Ada", 0, [1, 2]);
-  const receipt = JSON.parse(await upload(first, new AbortController().signal));
-  assert.deepEqual(receipt, { session_id: "s1", ack: 2 });
+  const grant = await open(upload, "Ada");
+  const id = grant.session.id;
+  const first = batch(grant, 0, [1, 2]);
+  const receipt = JSON.parse(await upload.send(first, signal()));
+  assert.deepEqual(receipt, { session_id: id, ack: 2 });
   // The same batch again is an identical retry; changed content under the same
   // checkpoint conflicts.
-  assert.deepEqual(
-    JSON.parse(await upload(first, new AbortController().signal)),
-    receipt,
-  );
+  assert.deepEqual(JSON.parse(await upload.send(first, signal())), receipt);
   await assert.rejects(
-    upload(batch("s1", "Ada", 0, [1, 2, 3]), new AbortController().signal),
+    upload.send(batch(grant, 0, [1, 2, 3]), signal()),
     /Conflicting local batch/,
   );
   await assert.rejects(
-    upload("not a batch", new AbortController().signal),
+    upload.send(batch(grant, 2, [3], "forged"), signal()),
+    /token/,
+  );
+  await assert.rejects(
+    upload.send("not a batch", signal()),
     /Invalid archive batch/,
   );
 });
@@ -103,23 +115,25 @@ test("upload stores each batch under its session and returns a validated receipt
 test("the viewer source lists a user's sessions and pages ranges with a cursor", async () => {
   clear();
   const upload = archive.transport();
-  const signal = new AbortController().signal;
-  await upload(batch("s1", "Ada", 0, [1, 2]), signal);
-  await upload(batch("s1", "Ada", 2, [3, 4]), signal);
-  await upload(batch("s1", "Ada", 4, [5]), signal);
-  await upload(batch("s2", "Grace", 0, [1]), signal);
+  const ada = await open(upload, "Ada");
+  const grace = await open(upload, "Grace");
+  await upload.send(batch(ada, 0, [1, 2]), signal());
+  await upload.send(batch(ada, 2, [3, 4]), signal());
+  await upload.send(batch(ada, 4, [5]), signal());
+  await upload.send(batch(grace, 0, [1]), signal());
+  const id = ada.session.id;
 
   const source = archive.source();
   const sessions = await accepted(source.list_sessions("Ada"));
   assert.deepEqual(
     sessions.toArray().map((summary) => [summary.session.id, summary.sequence]),
-    [["s1", 5]],
+    [[id, 5]],
   );
 
-  const first = await accepted(source.read_range("s1", 0, 2));
+  const first = await accepted(source.read_range(id, 0, 2));
   assert.equal(first.batches.toArray().length, 2);
   assert.equal(first.next[0], 4); // cursor is the last absolute sequence returned
-  const rest = await accepted(source.read_range("s1", first.next[0], 2));
+  const rest = await accepted(source.read_range(id, first.next[0], 2));
   assert.equal(rest.batches.toArray().length, 1);
   assert.equal(rest.next.constructor.name, "None");
 });
