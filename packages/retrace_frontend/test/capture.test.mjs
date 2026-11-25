@@ -2,7 +2,10 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as capture from "../build/dev/javascript/retrace_frontend/retrace_frontend/capture.mjs";
 import { Config } from "../build/dev/javascript/retrace_frontend/retrace_frontend/client.mjs";
-import { Event } from "../build/dev/javascript/retrace/retrace/wire.mjs";
+import {
+  Event,
+  Metadata,
+} from "../build/dev/javascript/retrace/retrace/wire.mjs";
 import { perform } from "../build/dev/javascript/lustre/lustre/effect.mjs";
 import {
   Result$Ok,
@@ -14,6 +17,18 @@ const until = async (f) => {
     await new Promise((r) => setTimeout(r, 10));
   }
   throw Error("timeout");
+};
+// A collector stand-in that issues one session and answers uploads with send.
+const collector = (send, id = "issued-1") => ({
+  open: async (metadata) =>
+    JSON.stringify({
+      session: { id, ...JSON.parse(metadata) },
+      token: "token-1",
+    }),
+  send,
+});
+const refuse = (reason) => async () => {
+  throw Error(reason);
 };
 const run = (effect, dispatch) =>
   perform(
@@ -28,14 +43,12 @@ const run = (effect, dispatch) =>
   );
 test("failed projection never reaches codecs or delivery and stops capture without copying its error", () => {
   let [state] = capture.start_with_clock(
-    capture.session("opaque", "build", "contract", "web"),
+    new Metadata("opaque", "build", "contract", "web"),
     new Config("local", "projection", 10, 10000),
     async () => {
       throw Error("must not open");
     },
-    async () => {
-      throw Error("must not upload");
-    },
+    { open: refuse("must not open"), send: refuse("must not upload") },
     () => {
       throw Error("must not read clock");
     },
@@ -79,17 +92,16 @@ test("capture persists typed observations in order, keeps status out of history,
     put: async (k, b) => rows.set(k, b),
     remove: async (k) => rows.delete(k),
   };
-  const transport = async (body) => {
+  const transport = collector(async (body) => {
     const b = JSON.parse(body);
     received.push(b);
     return JSON.stringify({
       session_id: b.session.id,
       ack: b.entries.at(-1).sequence,
     });
-  };
-  const session = capture.session("Ada", "test-build", "test-v1", "web");
+  });
   const result = capture.start_with_clock(
-    session,
+    new Metadata("Ada", "test-build", "test-v1", "web"),
     new Config("local", "test", 10, 10000),
     async () => store,
     transport,
@@ -100,6 +112,7 @@ test("capture persists typed observations in order, keeps status out of history,
   [state, effect] = result[0];
   const dispatch = (m) => (state = capture.update(state, m));
   run(effect, dispatch);
+  await until(() => capture.info(state).session[0]);
   const observe = (before, event) => {
     [state, effect] = capture.observe(
       state,
@@ -126,6 +139,13 @@ test("capture persists typed observations in order, keeps status out of history,
     ],
   );
   assert.equal(received[1].checkpoint.model, '{"value":2}');
+  assert.deepEqual(
+    received.map((b) => [b.session.id, b.token]),
+    [
+      ["issued-1", "token-1"],
+      ["issued-1", "token-1"],
+    ],
+  );
   now = 1;
   observe({ value: 5 }, 4);
   assert.equal(capture.info(state).captured, 2);
@@ -135,23 +155,75 @@ test("capture persists typed observations in order, keeps status out of history,
   assert.equal(capture.info(state).captured, 2);
   run(capture.stop(state), dispatch);
 });
-test("capture refuses a transition before connection instead of silently losing history", () => {
+test("capture records nothing until the collector has opened the session", async () => {
+  let state, effect, connect;
+  const received = [];
+  let grant;
+  const opened = new Promise((r) => (grant = r));
+  const rows = new Map();
+  [state, connect] = capture.start_with_clock(
+    new Metadata("Ada", "build", "contract", "web"),
+    new Config("x", "x", 10, 10000),
+    async () => ({
+      all: async () => [...rows].map(([key, body]) => ({ key, body })),
+      put: async (k, b) => void rows.set(k, b),
+      remove: async (k) => void rows.delete(k),
+    }),
+    {
+      open: async (metadata) => {
+        await opened;
+        return JSON.stringify({
+          session: { id: "issued-2", ...JSON.parse(metadata) },
+          token: "token-2",
+        });
+      },
+      send: async (body) => {
+        const b = JSON.parse(body);
+        received.push(b);
+        return JSON.stringify({ session_id: b.session.id, ack: 1 });
+      },
+    },
+    () => 3,
+  )[0];
+  const dispatch = (m) => (state = capture.update(state, m));
+  const observe = (before, event) => {
+    [state, effect] = capture.observe(
+      state,
+      before,
+      event,
+      JSON.stringify,
+      (n) => new Event("Add", String(n)),
+    );
+    run(effect, dispatch);
+  };
+  observe({ value: 0 }, 1);
+  run(connect, dispatch);
+  observe({ value: 1 }, 2);
+  assert.equal(capture.info(state).captured, 0);
+  assert.equal(capture.info(state).session[0], undefined);
+  assert.equal(capture.info(state).failure[0], undefined);
+  grant();
+  await until(() => capture.info(state).session[0]);
+  assert.equal(capture.info(state).session[0].id, "issued-2");
+  observe({ value: 3 }, 4);
+  await until(() => received.length === 1);
+  assert.equal(received[0].checkpoint.sequence, 0);
+  assert.equal(received[0].checkpoint.model, '{"value":3}');
+  assert.equal(received[0].token, "token-2");
+  run(capture.stop(state), dispatch);
+});
+
+test("capture refuses invalid metadata before starting anything", () => {
   const result = capture.start_with_clock(
-    capture.session("Ada", "build", "contract", "web"),
+    new Metadata("", "build", "contract", "web"),
     new Config("x", "x", 1, 100),
-    async () => {},
-    async () => {},
+    async () => {
+      throw Error("must not open");
+    },
+    { open: refuse("must not open"), send: refuse("must not upload") },
     () => 0,
   );
-  let [state] = result[0];
-  [state] = capture.observe(
-    state,
-    0,
-    1,
-    JSON.stringify,
-    (n) => new Event("Add", String(n)),
-  );
-  assert.match(capture.info(state).failure[0], /before connection/);
+  assert.ok(!result.isOk());
 });
 
 test("persistence failure remains visible and stops subsequent capture", async () => {
@@ -164,16 +236,15 @@ test("persistence failure remains visible and stops subsequent capture", async (
     remove: async () => {},
   };
   [state, effect] = capture.start_with_clock(
-    capture.session("Ada", "build", "contract", "web"),
+    new Metadata("Ada", "build", "contract", "web"),
     new Config("x", "x", 2, 10000),
     async () => store,
-    async () => {
-      throw Error("must not upload");
-    },
+    collector(refuse("must not upload")),
     () => 1,
   )[0];
   const dispatch = (m) => (state = capture.update(state, m));
   run(effect, dispatch);
+  await until(() => capture.info(state).session[0]);
   [state, effect] = capture.observe(
     state,
     { value: 0 },

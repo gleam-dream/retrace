@@ -63,21 +63,28 @@ async function openStorage(name, maxItems, maxBytes) {
 }
 
 export const browserStorage = () => openStorage;
-// Transport returns an acknowledgement JSON string. Runtime owns its deadline.
-export const httpTransport = (endpoint) => async (body, signal) => {
-  const response = await fetch(`${endpoint.replace(/\/$/, "")}/batches`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body,
-    signal,
-  });
-  if (!response.ok)
-    throw Error(
-      response.status === 409
-        ? "Recording conflict; saved batch retained"
-        : "Collector unavailable; retrying",
-    );
-  return response.text();
+// A transport opens sessions and uploads batches; each returns the collector's
+// JSON reply. The runtime owns deadlines.
+export const httpTransport = (endpoint) => {
+  const post = async (path, body, signal) => {
+    const response = await fetch(`${endpoint.replace(/\/$/, "")}${path}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body,
+      signal,
+    });
+    if (!response.ok)
+      throw Error(
+        response.status === 409
+          ? "Recording conflict; saved batch retained"
+          : "Collector unavailable; retrying",
+      );
+    return response.text();
+  };
+  return {
+    open: (metadata, signal) => post("/sessions", metadata, signal),
+    send: (body, signal) => post("/batches", body, signal),
+  };
 };
 export function start(endpoint, name, maxItems, maxBytes, onStatus) {
   return startWith(
@@ -111,6 +118,7 @@ export function startWith(name, maxItems, maxBytes, onStatus, open, transport) {
     timer: null,
     fault: false,
     controller: null,
+    opening: null,
   };
   client.storage = valid
     ? Promise.resolve().then(() => open(name, maxItems, maxBytes))
@@ -159,6 +167,26 @@ export function enqueue(client, body, saved) {
     });
 }
 
+// The open request is retried by every upload pass until it is answered.
+export function openSession(client, metadata, opened) {
+  if (client.stopped) return;
+  client.opening = { metadata, opened };
+  retry(client);
+}
+
+// Runs one request under the five-second deadline and the abort controller
+// that shutdown cancels.
+async function request(client, send) {
+  client.controller = new AbortController();
+  const timeout = setTimeout(() => client.controller?.abort(), 5000);
+  try {
+    return await send(client.controller.signal);
+  } finally {
+    clearTimeout(timeout);
+    client.controller = null;
+  }
+}
+
 export function retry(client) {
   if (client.stopped || client.busy) return;
   clearTimeout(client.timer);
@@ -166,26 +194,29 @@ export function retry(client) {
   (async () => {
     const storage = await client.storage;
     let rows = await storage.all();
+    if (client.opening && !client.stopped) {
+      const { metadata, opened } = client.opening;
+      client.onStatus(rows.length, client.ack, "Opening recording session");
+      const grant = await request(client, (signal) =>
+        client.transport.open(metadata, signal),
+      );
+      if (client.stopped) return;
+      client.opening = null;
+      opened(true, grant);
+    }
     rows.sort((a, b) => a.key.localeCompare(b.key));
     while (rows.length && !client.stopped) {
       const row = rows[0];
       const batch = JSON.parse(row.body);
       client.onStatus(rows.length, client.ack, "Uploading saved recording");
-      client.controller = new AbortController();
-      const timeout = setTimeout(() => client.controller?.abort(), 5000);
-      try {
-        const ack = JSON.parse(
-          await client.transport(row.body, client.controller.signal),
-        );
-        if (
-          ack.session_id !== batch.session.id ||
-          ack.ack !== batch.checkpoint.sequence + batch.entries.length
-        )
-          throw new Error("Invalid acknowledgement; saved batch retained");
-      } finally {
-        clearTimeout(timeout);
-        client.controller = null;
-      }
+      const ack = JSON.parse(
+        await request(client, (signal) => client.transport.send(row.body, signal)),
+      );
+      if (
+        ack.session_id !== batch.session.id ||
+        ack.ack !== batch.checkpoint.sequence + batch.entries.length
+      )
+        throw new Error("Invalid acknowledgement; saved batch retained");
       if (client.stopped) break;
       await storage.remove(row.key);
       client.ack += batch.entries.length;
