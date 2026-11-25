@@ -40,12 +40,21 @@ only. With a token set, submit through `client.start_with` and a transport from
 `client/adapter.transport`, read through a custom `viewer.Source`, or put a
 same-origin proxy that adds the header in front of the collector.
 
+## Sessions
+
+`POST /sessions` takes session metadata (`user_ref`, `build`, `contract`,
+`platform`) and answers `201` with the session the collector opened and its
+write token. `POST /batches` takes an upload: a batch with that token. An upload
+whose token does not prove its session is answered `404`, as for a session that
+does not exist, so a refusal reveals nothing about other sessions.
+
 ## Body limit
 
 A batch submission must declare its length. A request carrying any
 `Transfer-Encoding` or no `Content-Length` is refused with `411` before its body
 is read, because mist buffers each transfer chunk whole; the packaged adapters
-always send `Content-Length`. A declared length over `wire.max_bytes` (1 MiB) is
+always send `Content-Length`. A declared length over `wire.max_upload_bytes` (a
+one-MiB batch plus its token) is
 refused with `413` before the body is read. As a second defence, the body is
 streamed and refused with `413` if more bytes arrive than the limit allows.
 
