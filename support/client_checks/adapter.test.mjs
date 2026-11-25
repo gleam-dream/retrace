@@ -130,10 +130,7 @@ test("Gleam operations are cold, preserve exact bytes and first completion", asy
 
 test("provider errors and throws settle; first result survives later throw", async () => {
   await assert.rejects(
-    sender(() => failure("offline"))(
-      "batch",
-      new AbortController().signal,
-    ),
+    sender(() => failure("offline"))("batch", new AbortController().signal),
     /Provider: offline/,
   );
   await assert.rejects(

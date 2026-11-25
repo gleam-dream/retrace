@@ -210,7 +210,9 @@ export function retry(client) {
       const batch = JSON.parse(row.body);
       client.onStatus(rows.length, client.ack, "Uploading saved recording");
       const ack = JSON.parse(
-        await request(client, (signal) => client.transport.send(row.body, signal)),
+        await request(client, (signal) =>
+          client.transport.send(row.body, signal),
+        ),
       );
       if (
         ack.session_id !== batch.session.id ||
