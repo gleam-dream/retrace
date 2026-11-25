@@ -135,6 +135,12 @@
       #when[consecutive upload passes fail]
       #then[the batch stays saved and each wait is longer than the previous one, up to the cap]
     ]
+    #behavior(title: "A leaving page hands over its unacknowledged batches", level: "boundary", area: "Delivery")[
+      #given[a browser client whose latest batches are saved and not yet acknowledged]
+      #when[the page becomes hidden or navigates away]
+      #then[those batches are sent again by a request that outlives the page, in order and within the keepalive budget]
+      #then[they remain saved until a matching acknowledgement]
+    ]
     #behavior(title: "Capture failure stays visible", level: "interface", area: "Capture")[
       #given[the local queue is full or its storage write fails]
       #when[the application attempts to record another transition]
@@ -155,9 +161,10 @@
       [A #term("term-rejection") is a refusal that an identical retry cannot change. The packaged HTTP transport reports one for a 4xx response other than 401, 403, 407, 408, 425 and 429. After a rejection the collector cannot admit a later batch of that session contiguously, so the client discards every saved batch of that session, reports the discard as a status, continues with the other sessions and refuses further capture for the rejected session. Authorization, timeout and throttling responses, server errors, network failures and invalid acknowledgements keep the batch.],
       [A client runtime has one writer and one sequential upload loop. Each page instance starts a fresh session and still drains durable batches left by earlier instances. Duplicate uploads from overlapping runtimes are safe on the server.],
       [Browser persistence defaults to IndexedDB. Tauri uses an explicitly selected native store adapter, and a browser-only build needs no Tauri plugin. Tauri assumes one writing window per queue and provides no cross-process locking.],
+      [When its page becomes hidden or is about to end, a browser client hands the batches it saved and has not seen acknowledged to the transport's keepalive send, oldest first and each at most once. The browser completes such a request after the page is gone. The hand-over is an additional attempt and reads no reply: every batch stays in the queue until its acknowledgement, and a repeated batch is admitted idempotently. It covers only batches of the current runtime that together fit in 64,000 bytes, the browser's budget for keepalive bodies, and includes a batch whose local save is still in progress. After the first batch that does not fit, nothing is handed over until the queue has drained, so a later batch never overtakes an earlier one. The packaged HTTP transport provides the keepalive send. A typed transport and a foreign transport without one are not handed anything, and outside a page the client installs no listener.],
       [The #term("term-delivery-queue") caps pending capture and durable storage independently by item count and encoded bytes. Both caps together admit up to twice the encoded-payload budget plus metadata, encoding temporaries and storage-engine overhead. The caps are not a process heap limit.],
       [Admission reserves pending capacity synchronously, and overload stops further capture visibly. Already admitted writes complete unless persistence itself fails. A fresh application session starts after a capture gap.],
-      [The upload deadline of five seconds covers headers and the acknowledgement body. Shutdown aborts the active request and cancels retries. Admitted saves still settle, and shutdown never closes a handle borrowed from custom storage.],
+      [The upload deadline of five seconds covers headers and the acknowledgement body. Shutdown aborts the active request, cancels retries and removes the page listeners. A request already handed over is not aborted. Admitted saves still settle, and shutdown never closes a handle borrowed from custom storage.],
       [The runtime validates session and final sequence before deleting a batch. Cancellation cannot undo a server commit, so upload retries rely on idempotent admission.],
       [A live transition and its asynchronous local capture are separate commits, so abrupt termination before the save confirmation can lose that transition. Persisted batches survive a normal runtime restart. Device failure, storage eviction, mobile background execution and power loss are outside this guarantee, and native store durability means only that the plugin save completed.],
     )
@@ -168,7 +175,7 @@
         [The bridge observes only the first completion, turns provider throws into failures, and ignores late replies. It starts no scheduler or retry loop and takes no ownership of resources. #adr(7)],
         [Storage operations must settle, and their cancellation callbacks are never invoked because admitted writes and deletions finish after shutdown. The caller releases storage resources after those operations settle.],
         [A put must enforce durable item and UTF-8-byte limits atomically, accept identical retries, reject conflicting content, and reply only after saving. Multiple writers are coordinated by the storage implementation.],
-        [Upload receives the exact encoded batch and returns the acknowledgement as encoded JSON, so byte identity is preserved and the application may interpret the batch with the wire module. A custom transport honors cancellation and rejects unsuccessful responses. A typed transport may supply a predicate that classifies a provider error as a #term("term-rejection"), and a foreign transport marks one by throwing an error whose `rejected` property is true. An unclassified failure is retried.],
+        [Upload receives the exact encoded batch and returns the acknowledgement as encoded JSON, so byte identity is preserved and the application may interpret the batch with the wire module. A custom transport honors cancellation and rejects unsuccessful responses. A typed transport may supply a predicate that classifies a provider error as a #term("term-rejection"), and a foreign transport marks one by throwing an error whose `rejected` property is true. An unclassified failure is retried. A foreign transport may also carry a `keepalive` function that takes an encoded batch, starts an upload that outlives the page and returns nothing.],
         [Provider error types stay in application callbacks until the selected formatter produces string diagnostics. Authentication headers never enter recorded events.],
       )
       #md-table(2,
