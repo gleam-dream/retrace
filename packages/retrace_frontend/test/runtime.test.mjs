@@ -471,3 +471,36 @@ test("an unanswered session request is retried before uploads, and its grant rea
     await new Promise((r) => server.close(r));
   }
 });
+
+test("a refused session request is reported once and not retried", async () => {
+  let requests = 0;
+  const server = http.createServer((req, res) => {
+    req.resume();
+    requests++;
+    res.writeHead(400, { "content-type": "application/json" });
+    res.end('{"error":"Invalid recording request"}');
+  });
+  await new Promise((r) => server.listen(0, "127.0.0.1", r));
+  const grants = [];
+  const client = startWith(
+    "queue",
+    10,
+    10000,
+    () => {},
+    async () => memory(),
+    httpTransport(`http://127.0.0.1:${server.address().port}`),
+  );
+  try {
+    openSession(client, "{}", (...grant) => grants.push(grant));
+    await until(() => grants.length === 1);
+    assert.equal(grants[0][0], false);
+    assert.match(grants[0][1], /rejected/i);
+    retry(client);
+    await new Promise((r) => setTimeout(r, 50));
+    assert.equal(requests, 1);
+  } finally {
+    stop(client);
+    server.closeAllConnections();
+    await new Promise((r) => server.close(r));
+  }
+});

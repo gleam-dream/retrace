@@ -62,21 +62,14 @@ pub fn storage(
 /// and returns the encoded acknowledgement. The client checks the grant and the
 /// receipt before using them. Deadline and shutdown invoke pending task
 /// cancellation; a late callback cannot turn cancellation into success.
+///
+/// `rejected` classifies a provider error as a permanent refusal that an
+/// identical retry cannot change. A refused upload ends delivery of its session
+/// from this client: the client discards that session's saved batches and goes
+/// on with the others. A refused open fails the capture that asked for it.
+/// Every other failure is retried with backoff. Return False for failures the
+/// host can repair, such as expired credentials.
 pub fn transport(
-  open open: fn(String) -> Task(String, error),
-  send send: fn(String) -> Task(String, error),
-  explain explain: fn(error) -> String,
-) -> client.Transport {
-  transport_bridge(open, send, explain, fn(_) { False })
-}
-
-/// Construct a collector adapter that also classifies its failures. A failure
-/// for which `rejected` returns True is a permanent refusal: an identical
-/// retry cannot succeed, so the client discards the saved batches of that
-/// session and continues with the others. Every other failure keeps the
-/// batch and is retried with backoff. Classify authorization failures as
-/// retryable when the host can repair its credentials.
-pub fn rejecting_transport(
   open open: fn(String) -> Task(String, error),
   send send: fn(String) -> Task(String, error),
   explain explain: fn(error) -> String,

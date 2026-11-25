@@ -35,7 +35,12 @@ pub fn storage(
 pub fn transport(
   send: fn(String) -> adapter.Task(String, ProviderError),
 ) -> client.Transport {
-  adapter.transport(open: open, send: send, explain: explain)
+  adapter.transport(
+    open: open,
+    send: send,
+    explain: explain,
+    rejected: permanent,
+  )
 }
 
 fn open(metadata: String) -> adapter.Task(String, ProviderError) {
@@ -49,17 +54,6 @@ fn open(metadata: String) -> adapter.Task(String, ProviderError) {
       "typed-token",
     ))
   })
-}
-
-pub fn rejecting_transport(
-  send: fn(String) -> adapter.Task(String, ProviderError),
-) -> client.Transport {
-  adapter.rejecting_transport(
-    open: open,
-    send: send,
-    explain: explain,
-    rejected: permanent,
-  )
 }
 
 pub fn defaults() -> #(client.Storage, client.Transport) {

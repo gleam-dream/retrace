@@ -63,8 +63,10 @@ async function openStorage(name, maxItems, maxBytes) {
 }
 
 export const browserStorage = () => openStorage;
-// A refusal that an identical retry cannot change. Authorization failures are
-// excluded: the host may repair credentials, and they affect every batch alike.
+// A refusal that an identical retry cannot change. Only the session's own
+// writer can reach its session, so such a refusal is this client's to settle.
+// Authorization, timeout and throttling failures are excluded: the host may
+// repair credentials or capacity, and they affect every session alike.
 const rejects = (status) =>
   status >= 400 &&
   status < 500 &&
@@ -226,12 +228,22 @@ export function retry(client) {
     if (client.opening && !client.stopped) {
       const { metadata, opened } = client.opening;
       client.onStatus(rows.length, client.ack, "Opening recording session");
-      const grant = await request(client, (signal) =>
-        client.transport.open(metadata, signal),
-      );
+      let grant;
+      try {
+        grant = await request(client, (signal) =>
+          client.transport.open(metadata, signal),
+        );
+      } catch (error) {
+        // A refused request cannot be repaired by sending it again.
+        if (error?.rejected !== true || client.stopped) throw error;
+        client.opening = null;
+        opened(false, error.message);
+      }
       if (client.stopped) return;
-      client.opening = null;
-      opened(true, grant);
+      if (grant !== undefined) {
+        client.opening = null;
+        opened(true, grant);
+      }
     }
     while (rows.length && !client.stopped) {
       const row = rows[0];

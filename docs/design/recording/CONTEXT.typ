@@ -10,6 +10,6 @@
   (slug: "term-replay-contract", title: [Replay contract], body: [The application-owned compatibility identifier for its event schema, checkpoint schema and reducer semantics.]),
   (slug: "term-write-token", title: [Write token], body: [The secret the server issues with a session when it opens it. Every upload of the session presents it, the server keeps only its digest, and no batch contains it.]),
   (slug: "term-delivery-queue", title: [Delivery queue], body: [The client's bounded durable collection of saved batches awaiting acknowledgement.]),
-  (slug: "term-rejection", title: [Rejection], body: [A collector refusal of a batch that an identical retry cannot change, such as an erased session, a conflict or an invalid batch. It ends delivery of that session from this client.]),
+  (slug: "term-rejection", title: [Rejection], body: [A collector refusal of a batch that an identical retry cannot change, such as an erased session, a conflict or an invalid batch. Only the session's writer can cause one, and it ends delivery of that session from this client.]),
   (slug: "term-task", title: [Task], body: [A cold callback operation that starts its work when invoked, replies once with a result, and returns a function that cancels its pending work.]),
 )

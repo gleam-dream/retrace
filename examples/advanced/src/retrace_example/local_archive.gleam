@@ -138,6 +138,8 @@ pub fn transport() -> client.Transport {
       })
     },
     explain: fn(error) { error },
+    // Every archive failure is local and may pass, so each is retried.
+    rejected: fn(_) { False },
   )
 }
 

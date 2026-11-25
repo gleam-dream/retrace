@@ -400,7 +400,7 @@ test("typed transport classifies a permanent refusal; only that session is disca
   const runtime = client.start_with(
     config(),
     state.adapter,
-    consumer.rejecting_transport((body) => {
+    consumer.transport((body) => {
       sent.push(body);
       return (reply) => {
         reply(ErrorResult(new consumer.Refused("session erased")));
@@ -423,7 +423,7 @@ test("typed transport classifies a permanent refusal; only that session is disca
   const retained = client.start_with(
     config(),
     kept.adapter,
-    consumer.rejecting_transport(() => failure("offline")),
+    consumer.transport(() => failure("offline")),
     (status) => statuses.push(status),
   );
   try {
