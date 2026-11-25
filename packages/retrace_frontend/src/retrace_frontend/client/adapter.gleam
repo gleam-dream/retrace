@@ -56,15 +56,18 @@ pub fn storage(
   )
 }
 
-/// Construct an upload adapter. Send receives the exact encoded batch and
-/// returns the encoded acknowledgement. The client checks the receipt before
-/// removing anything from storage. Deadline and shutdown invoke pending task
+/// Construct a collector adapter. Open receives encoded session metadata and
+/// returns the encoded grant: a session id the collector chose and the write
+/// token it issued (`wire.encode_grant`). Send receives the exact encoded upload
+/// and returns the encoded acknowledgement. The client checks the grant and the
+/// receipt before using them. Deadline and shutdown invoke pending task
 /// cancellation; a late callback cannot turn cancellation into success.
 pub fn transport(
-  send: fn(String) -> Task(String, error),
-  explain: fn(error) -> String,
+  open open: fn(String) -> Task(String, error),
+  send send: fn(String) -> Task(String, error),
+  explain explain: fn(error) -> String,
 ) -> client.Transport {
-  transport_bridge(send, explain)
+  transport_bridge(open, send, explain)
 }
 
 @external(javascript, "./adapter_ffi.mjs", "storage")
@@ -75,6 +78,7 @@ fn storage_bridge(
 
 @external(javascript, "./adapter_ffi.mjs", "transport")
 fn transport_bridge(
+  open: fn(String) -> Task(String, error),
   send: fn(String) -> Task(String, error),
   explain: fn(error) -> String,
 ) -> client.Transport

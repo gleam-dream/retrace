@@ -33,6 +33,10 @@ pub type Error {
   /// The database holds a schema from before write attempts. `migrate` refuses
   /// it unchanged: start from an empty database.
   UnsupportedSchema(String)
+  /// The upload does not prove the write capability of an open session: the
+  /// session was never opened here, or the token is not the one issued with it.
+  /// Nothing was written, and the session is unchanged.
+  Unauthorized
   Conflict
   OutOfOrder(expected: Int, received: Int)
   NotFound
@@ -119,7 +123,12 @@ pub type Summary {
 }
 
 type Head {
-  Head(sequence: Int, elapsed_ms: Int, metadata: String)
+  Head(
+    sequence: Int,
+    elapsed_ms: Int,
+    metadata: String,
+    write_digest: Option(String),
+  )
 }
 
 type Chunk {
@@ -170,6 +179,9 @@ fn create_schema(db: pog.Connection) -> Result(Nil, Error) {
       id text PRIMARY KEY, user_ref text NOT NULL, metadata text NOT NULL,
       sequence bigint NOT NULL DEFAULT 0, elapsed_ms bigint NOT NULL DEFAULT 0,
       created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now())",
+    // Sessions admitted before server-issued identity have no digest, so no
+    // upload can prove them and they accept no further batches.
+    "ALTER TABLE retrace_sessions ADD COLUMN IF NOT EXISTS write_digest text",
     "CREATE INDEX IF NOT EXISTS retrace_user_sessions ON retrace_sessions(user_ref, updated_at DESC)",
     "CREATE TABLE IF NOT EXISTS retrace_chunks (
       session_id text NOT NULL REFERENCES retrace_sessions(id), start_sequence bigint NOT NULL,
@@ -198,7 +210,8 @@ fn head_decoder() -> decode.Decoder(Head) {
   use sequence <- decode.field(0, decode.int)
   use elapsed <- decode.field(1, decode.int)
   use metadata <- decode.field(2, decode.string)
-  decode.success(Head(sequence, elapsed, metadata))
+  use write_digest <- decode.field(3, decode.optional(decode.string))
+  decode.success(Head(sequence, elapsed, metadata, write_digest))
 }
 
 fn transaction(
@@ -214,10 +227,40 @@ fn transaction(
   })
 }
 
-/// Atomically admit one immutable batch. Exact retries return its end cursor,
-/// including after archival; overlapping or differently chunked input conflicts.
-pub fn accept(db: pog.Connection, batch: Batch) -> Result(Int, Error) {
-  transaction(db, fn(tx) { accept_in_transaction(tx, batch) })
+/// Open a session for the stated metadata. The server chooses the session id
+/// and a write token, and stores only a digest of the token. Authenticate the
+/// caller first and choose `user_ref` from that authentication where it matters:
+/// every later batch of the session must present the token, so whoever opens a
+/// session is its only writer.
+pub fn open(
+  db: pog.Connection,
+  metadata: wire.Metadata,
+) -> Result(wire.Grant, Error) {
+  use _ <- result.try(
+    wire.validate_metadata(metadata) |> result.map_error(InvalidBatch),
+  )
+  let session = wire.session(random_token(16), metadata)
+  let token = random_token(32)
+  use _ <- result.try(
+    pog.query(
+      "INSERT INTO retrace_sessions(id,user_ref,metadata,write_digest) VALUES($1,$2,$3,$4)",
+    )
+    |> pog.parameter(pog.text(session.id))
+    |> pog.parameter(pog.text(session.user_ref))
+    |> pog.parameter(pog.text(wire.session_json(session) |> json.to_string))
+    |> pog.parameter(pog.text(digest(token)))
+    |> pog.execute(db)
+    |> result.map_error(Database),
+  )
+  Ok(wire.Grant(session, token))
+}
+
+/// Atomically admit one immutable batch of an open session. Exact retries return
+/// its end cursor, including after archival; overlapping or differently chunked
+/// input conflicts. An upload whose token does not match the session's is
+/// `Unauthorized` and changes nothing.
+pub fn accept(db: pog.Connection, upload: wire.Upload) -> Result(Int, Error) {
+  transaction(db, fn(tx) { accept_in_transaction(tx, upload) })
 }
 
 /// Compose host authorization/accounting in the same caller-owned transaction.
@@ -225,36 +268,33 @@ pub fn accept(db: pog.Connection, batch: Batch) -> Result(Int, Error) {
 /// start or commit one. Never nest pog.transaction (Pog 4 commits nested BEGIN).
 pub fn accept_in_transaction(
   tx: pog.Connection,
-  batch: Batch,
+  upload: wire.Upload,
 ) -> Result(Int, Error) {
+  let batch = upload.batch
   use _ <- result.try(wire.validate(batch) |> result.map_error(InvalidBatch))
+  let token_digest = digest(upload.token)
   let payload = wire.encode(batch)
   let digest = digest(payload)
   let metadata = wire.session_json(batch.session) |> json.to_string
   use _ <- result.try(lock_session(tx, batch.session.id))
   use _ <- result.try(require_live(tx, batch.session.id))
-  use _ <- result.try(
-    pog.query(
-      "INSERT INTO retrace_sessions(id,user_ref,metadata) VALUES($1,$2,$3) ON CONFLICT DO NOTHING",
-    )
-    |> pog.parameter(pog.text(batch.session.id))
-    |> pog.parameter(pog.text(batch.session.user_ref))
-    |> pog.parameter(pog.text(metadata))
-    |> pog.execute(tx)
-    |> result.map_error(Database),
-  )
   use heads <- result.try(
     pog.query(
-      "SELECT sequence,elapsed_ms,metadata FROM retrace_sessions WHERE id=$1 FOR UPDATE",
+      "SELECT sequence,elapsed_ms,metadata,write_digest FROM retrace_sessions WHERE id=$1 FOR UPDATE",
     )
     |> pog.parameter(pog.text(batch.session.id))
     |> pog.returning(head_decoder())
     |> pog.execute(tx)
     |> result.map_error(Database),
   )
-  use head <- result.try(
-    list.first(heads.rows) |> result.map_error(fn(_) { NotFound }),
-  )
+  use head <- result.try(case heads.rows {
+    [Head(write_digest: Some(expected), ..) as head] ->
+      case same_digest(token_digest, expected) {
+        True -> Ok(head)
+        False -> Error(Unauthorized)
+      }
+    _ -> Error(Unauthorized)
+  })
   let duplicate_decoder = {
     use digest <- decode.field(0, decode.string)
     use sequence <- decode.field(1, decode.int)
@@ -973,7 +1013,7 @@ pub fn sessions(
     "SELECT s.metadata,s.sequence,s.elapsed_ms,
     (SELECT count(*) FROM retrace_chunks c WHERE c.session_id=s.id AND c.payload IS NOT NULL),
     (SELECT count(*) FROM retrace_chunks c WHERE c.session_id=s.id AND c.payload IS NULL)
-    FROM retrace_sessions s WHERE ($1='' OR s.user_ref=$1) AND NOT EXISTS (SELECT 1 FROM retrace_tombstones t WHERE t.session_id=s.id) ORDER BY s.updated_at DESC LIMIT 100",
+    FROM retrace_sessions s WHERE ($1='' OR s.user_ref=$1) AND s.sequence>0 AND NOT EXISTS (SELECT 1 FROM retrace_tombstones t WHERE t.session_id=s.id) ORDER BY s.updated_at DESC LIMIT 100",
   )
   |> pog.parameter(pog.text(user_ref))
   |> pog.returning(decoder)
@@ -984,6 +1024,14 @@ pub fn sessions(
 
 @external(erlang, "retrace_server_ffi", "digest")
 fn digest(input: String) -> String
+
+/// Compares two digests in time independent of where they differ.
+@external(erlang, "retrace_server_ffi", "same_digest")
+fn same_digest(given: String, expected: String) -> Bool
+
+/// URL-safe base64 of this many cryptographically strong random bytes.
+@external(erlang, "retrace_server_ffi", "random_token")
+fn random_token(bytes: Int) -> String
 
 @external(erlang, "retrace_server_ffi", "compress")
 fn compress(input: String) -> BitArray

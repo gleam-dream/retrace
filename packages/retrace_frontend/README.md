@@ -35,7 +35,11 @@ Commit `gleam.toml` and `manifest.toml` to retain the resolved versions.
 
 ## Quick usage
 
-Connect capture once and observe each accepted transition with the previous state:
+Start capture from session metadata. Its connection effect asks the collector to
+open a session; the collector chooses the session id and issues the write token
+every upload carries. Recording begins with the first transition observed after
+the session is open. A transport has two operations, `open` and `send`. Connect
+capture once and observe each accepted transition with the previous state:
 
 <!-- prettier-ignore-start -->
 

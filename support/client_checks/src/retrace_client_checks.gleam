@@ -1,5 +1,7 @@
 //// Separate consumer for typed client operation contracts and recovery.
 
+import gleam/result
+import retrace/wire
 import retrace_frontend/client
 import retrace_frontend/client/adapter
 
@@ -20,10 +22,24 @@ pub fn storage(
   adapter.storage(open, explain)
 }
 
+/// Sessions are opened by a provider written in Gleam that issues one fixed id.
 pub fn transport(
   send: fn(String) -> adapter.Task(String, ProviderError),
 ) -> client.Transport {
-  adapter.transport(send, explain)
+  adapter.transport(open: open, send: send, explain: explain)
+}
+
+fn open(metadata: String) -> adapter.Task(String, ProviderError) {
+  adapter.defer(fn() {
+    use metadata <- result.map(
+      wire.decode_metadata(metadata)
+      |> result.replace_error(Unavailable("invalid metadata")),
+    )
+    wire.encode_grant(wire.Grant(
+      wire.session("typed-session", metadata),
+      "typed-token",
+    ))
+  })
 }
 
 pub fn defaults() -> #(client.Storage, client.Transport) {
