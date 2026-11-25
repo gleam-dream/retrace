@@ -64,7 +64,21 @@ pub fn transport(
   send: fn(String) -> Task(String, error),
   explain: fn(error) -> String,
 ) -> client.Transport {
-  transport_bridge(send, explain)
+  transport_bridge(send, explain, fn(_) { False })
+}
+
+/// Construct an upload adapter that also classifies its failures. A failure
+/// for which `rejected` returns True is a permanent refusal: an identical
+/// retry cannot succeed, so the client discards the saved batches of that
+/// session and continues with the others. Every other failure keeps the
+/// batch and is retried with backoff. Classify authorization failures as
+/// retryable when the host can repair its credentials.
+pub fn rejecting_transport(
+  send: fn(String) -> Task(String, error),
+  explain: fn(error) -> String,
+  rejected: fn(error) -> Bool,
+) -> client.Transport {
+  transport_bridge(send, explain, rejected)
 }
 
 @external(javascript, "./adapter_ffi.mjs", "storage")
@@ -77,4 +91,5 @@ fn storage_bridge(
 fn transport_bridge(
   send: fn(String) -> Task(String, error),
   explain: fn(error) -> String,
+  rejected: fn(error) -> Bool,
 ) -> client.Transport

@@ -1,4 +1,4 @@
-import { test } from "node:test";
+import { test, mock } from "node:test";
 import assert from "node:assert/strict";
 import http from "node:http";
 import {
@@ -20,9 +20,9 @@ function memory() {
     },
   };
 }
-const batch = (n = 0) =>
+const batch = (n = 0, id = "inventory") =>
   JSON.stringify({
-    session: { id: "inventory" },
+    session: { id },
     checkpoint: { sequence: n },
     entries: [{}],
   });
@@ -194,5 +194,190 @@ test("shutdown aborts a stalled body and a fresh runtime recovers the outbox", a
     if (recovered) stop(recovered);
     server.closeAllConnections();
     await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+test("a permanently rejected session is discarded so later sessions deliver", async () => {
+  const requests = [];
+  const server = http.createServer((req, res) => {
+    let body = "";
+    req.on("data", (chunk) => (body += chunk));
+    req.on("end", () => {
+      const { session, checkpoint } = JSON.parse(body);
+      requests.push(session.id);
+      if (session.id === "erased") {
+        res.writeHead(404, { "content-type": "application/json" });
+        res.end('{"error":"Session not found"}');
+      } else {
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(
+          JSON.stringify({
+            session_id: session.id,
+            ack: checkpoint.sequence + 1,
+          }),
+        );
+      }
+    });
+  });
+  await new Promise((r) => server.listen(0, "127.0.0.1", r));
+  const store = memory(),
+    statuses = [];
+  // Rows left by an earlier page load, drained in key order: "erased" first.
+  await store.put("erased:0000000000000000", batch(0, "erased"));
+  await store.put("erased:0000000000000001", batch(1, "erased"));
+  await store.put("inventory:0000000000000000", batch(0));
+  const client = startWith(
+    "queue",
+    10,
+    10000,
+    (...s) => statuses.push(s),
+    async () => store,
+    httpTransport(`http://127.0.0.1:${server.address().port}`),
+  );
+  try {
+    await until(() => statuses.some((s) => s[1] === 1));
+    await until(async () => (await store.all()).length === 0);
+    // One refusal settles the whole session: its second batch is never sent.
+    assert.deepEqual(requests, ["erased", "inventory"]);
+    assert.ok(statuses.some((s) => /rejected/i.test(s[2])));
+    // The live writer of a rejected session learns that capture has stopped.
+    const outcome = await new Promise((r) =>
+      enqueue(client, batch(2, "erased"), (ok, message) => r([ok, message])),
+    );
+    assert.equal(outcome[0], false);
+    assert.match(outcome[1], /rejected/i);
+    assert.equal((await store.all()).length, 0);
+  } finally {
+    stop(client);
+    await new Promise((r) => server.close(r));
+  }
+});
+
+test("an unauthorized, throttled or failing collector keeps the batch for a later retry", async () => {
+  for (const status of [401, 403, 408, 429, 503]) {
+    let calls = 0;
+    const server = http.createServer((req, res) => {
+      req.resume();
+      calls++;
+      res.writeHead(calls === 1 ? status : 200);
+      res.end('{"session_id":"inventory","ack":1}');
+    });
+    await new Promise((r) => server.listen(0, "127.0.0.1", r));
+    const store = memory(),
+      statuses = [];
+    await store.put("inventory:0000000000000000", batch());
+    const client = startWith(
+      "queue",
+      10,
+      10000,
+      (...s) => statuses.push(s),
+      async () => store,
+      httpTransport(`http://127.0.0.1:${server.address().port}`),
+    );
+    try {
+      await until(() => calls === 1 && statuses.length >= 2);
+      assert.equal((await store.all()).length, 1, `status ${status}`);
+      retry(client);
+      await until(() => statuses.some((s) => s[1] === 1));
+      assert.equal((await store.all()).length, 0);
+    } finally {
+      stop(client);
+      await new Promise((r) => server.close(r));
+    }
+  }
+});
+
+const settle = () => new Promise((r) => setImmediate(r));
+test("failed uploads back off exponentially with jitter up to a cap", async () => {
+  const attempts = async (random, simulatedMs) => {
+    mock.timers.enable({ apis: ["setTimeout"] });
+    mock.method(Math, "random", () => random);
+    const store = memory();
+    await store.put("inventory:0000000000000000", batch());
+    const times = [];
+    let now = 0;
+    const client = startWith(
+      "queue",
+      10,
+      10000,
+      () => {},
+      async () => store,
+      async () => {
+        times.push(now);
+        throw Error("offline");
+      },
+    );
+    try {
+      await settle();
+      while (now < simulatedMs) {
+        now += 250;
+        mock.timers.tick(250);
+        await settle();
+      }
+      return times;
+    } finally {
+      stop(client);
+      mock.timers.reset();
+      mock.restoreAll();
+    }
+  };
+  // Largest jitter: each wait is the full exponential step, capped at 60 s.
+  assert.deepEqual(
+    await attempts(1, 300000),
+    [0, 1500, 4500, 10500, 22500, 46500, 94500, 154500, 214500, 274500],
+  );
+  // Smallest jitter halves every wait, so clients spread over that range.
+  assert.deepEqual(await attempts(0, 12000), [0, 750, 2250, 5250, 11250]);
+});
+
+test("a delivered batch resets the backoff", async () => {
+  mock.timers.enable({ apis: ["setTimeout"] });
+  mock.method(Math, "random", () => 1);
+  const store = memory();
+  await store.put("inventory:0000000000000000", batch());
+  const times = [];
+  let now = 0,
+    online = false;
+  const client = startWith(
+    "queue",
+    10,
+    10000,
+    () => {},
+    async () => store,
+    async (body) => {
+      times.push(now);
+      if (!online) throw Error("offline");
+      const sent = JSON.parse(body);
+      return JSON.stringify({
+        session_id: "inventory",
+        ack: sent.checkpoint.sequence + 1,
+      });
+    },
+  );
+  const advance = async (ms) => {
+    for (const end = now + ms; now < end;) {
+      now += 250;
+      mock.timers.tick(250);
+      await settle();
+    }
+  };
+  try {
+    await settle();
+    await advance(4500);
+    assert.deepEqual(times, [0, 1500, 4500]);
+    online = true;
+    await advance(6000);
+    assert.deepEqual(times, [0, 1500, 4500, 10500]);
+    online = false;
+    await store.put("inventory:0000000000000001", batch(1));
+    retry(client);
+    await settle();
+    const failedAt = now;
+    await advance(1500);
+    assert.deepEqual(times.slice(4), [failedAt, failedAt + 1500]);
+  } finally {
+    stop(client);
+    mock.timers.reset();
+    mock.restoreAll();
   }
 });
