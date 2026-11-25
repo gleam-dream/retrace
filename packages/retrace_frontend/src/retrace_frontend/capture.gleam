@@ -2,16 +2,22 @@
 //// Map the returned effects/messages into your application. They are not events
 //// to record. Stop the owned client when the application unmounts.
 
+import gleam/int
+import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/result
+import gleam/string
 import lustre/effect.{type Effect}
 import retrace
 import retrace/wire
 import retrace_frontend/client
 
 pub opaque type State {
-  State(info: Info, phase: Phase, clock: fn() -> Int)
+  State(info: Info, phase: Phase, clock: fn() -> Int, flush_after_ms: Int)
 }
+
+/// Mutable holder of the open batch, owned by one client runtime.
+type Buffer
 
 // The client exists from connection on; the session and its recorder exist only
 // once the collector has issued them.
@@ -40,7 +46,7 @@ pub opaque type Message {
   Connected(client.Client)
   Opened(Result(wire.Grant, String))
   Delivery(client.Status)
-  Saved(Result(Nil, String))
+  Saved(saved: Result(Nil, String), entries: Int)
 }
 
 /// Start capture for a new session. The connection effect starts the client and
@@ -48,13 +54,30 @@ pub opaque type Message {
 /// the session id and issues the write token every batch must carry. Recording
 /// begins with the first transition observed after the session is open; the
 /// session's first checkpoint is the state before that transition.
+///
+/// Observations are uploaded in batches. A batch opens at an observation and
+/// closes `flush_after_ms` later, at the wire format's 128 entries, before an
+/// observation that would take it past half of the wire byte limit, on `flush`
+/// and on `stop`. It carries one checkpoint, the state before its first
+/// observation, so the model is encoded and uploaded once per batch, and replay
+/// ranges start at batch boundaries. With a window of zero every observation is
+/// saved at once as its own batch. Held observations count as captured and not
+/// as saved, and are lost if the page ends before their batch closes.
 pub fn start(
   metadata: wire.Metadata,
   config: client.Config,
   storage: client.Storage,
   transport: client.Transport,
+  flush_after_ms: Int,
 ) -> Result(#(State, Effect(Message)), wire.Error) {
-  start_with_clock(metadata, config, storage, transport, monotonic_clock())
+  start_with_clock(
+    metadata,
+    config,
+    storage,
+    transport,
+    flush_after_ms,
+    monotonic_clock(),
+  )
 }
 
 /// The clock returns elapsed milliseconds since this session began.
@@ -63,6 +86,7 @@ pub fn start_with_clock(
   config: client.Config,
   storage: client.Storage,
   transport: client.Transport,
+  flush_after_ms: Int,
   clock: fn() -> Int,
 ) -> Result(#(State, Effect(Message)), wire.Error) {
   use _ <- result.try(wire.validate_metadata(metadata))
@@ -77,6 +101,7 @@ pub fn start_with_clock(
       ),
       Connecting,
       clock,
+      int.max(flush_after_ms, 0),
     ),
     effect.from(fn(dispatch) {
       let runtime =
@@ -111,9 +136,12 @@ pub fn update(state: State, message: Message) -> State {
     Opened(Error(reason)), _ -> failed(state, reason)
     Delivery(status), _ ->
       State(..state, info: Info(..state.info, delivery: status))
-    Saved(Ok(_)), _ ->
-      State(..state, info: Info(..state.info, saved: state.info.saved + 1))
-    Saved(Error(reason)), _ -> failed(state, reason)
+    Saved(Ok(_), entries), _ ->
+      State(
+        ..state,
+        info: Info(..state.info, saved: state.info.saved + entries),
+      )
+    Saved(Error(reason), _), _ -> failed(state, reason)
   }
 }
 
@@ -139,7 +167,11 @@ pub fn observe(
   case state.info.failure, state.phase {
     Some(_), _ | None, Connecting | None, Opening(_) -> #(state, effect.none())
     None, Recording(runtime, grant, recorder) -> {
-      let checkpoint = retrace.checkpoint(recorder, encode_model(before))
+      // Encoded only when a batch needs its checkpoint: once per batch.
+      let checkpoint = fn() {
+        let checkpoint = retrace.checkpoint(recorder, encode_model(before))
+        #(checkpoint, string.byte_size(checkpoint.model))
+      }
       case retrace.record(recorder, encode_message(message), state.clock()) {
         Error(_) -> #(
           failed(state, "Invalid recording time. Start a new session."),
@@ -152,13 +184,25 @@ pub fn observe(
             info: Info(..state.info, captured: state.info.captured + 1),
           ),
           effect.from(fn(dispatch) {
-            client.enqueue(
-              runtime,
-              wire.Upload(
-                grant.token,
-                wire.Batch(grant.session, checkpoint, [entry]),
-              ),
-              fn(saved) { dispatch(Saved(saved)) },
+            buffer_add(
+              buffer(runtime),
+              entry,
+              entry_bytes(entry),
+              checkpoint,
+              state.flush_after_ms,
+              wire.max_entries,
+              // Half the wire limit leaves room for JSON escaping of the model.
+              wire.max_bytes / 2,
+              fn(checkpoint, entries) {
+                client.enqueue(
+                  runtime,
+                  wire.Upload(
+                    grant.token,
+                    wire.Batch(grant.session, checkpoint, entries),
+                  ),
+                  fn(saved) { dispatch(Saved(saved, list.length(entries))) },
+                )
+              },
             )
           }),
         )
@@ -197,15 +241,57 @@ pub fn retry(state: State) -> Effect(Message) {
   })
 }
 
-/// Run before discarding the application state. Persisted batches remain queued.
+/// Save the open batch now instead of waiting for its window. Use it before
+/// the page may end, for example when it becomes hidden. Does nothing when no
+/// observation is held.
+pub fn flush(state: State) -> Effect(Message) {
+  effect.from(fn(_) {
+    case state.phase {
+      Recording(runtime, ..) -> buffer_flush(buffer(runtime))
+      Opening(_) | Connecting -> Nil
+    }
+  })
+}
+
+/// Run before discarding the application state. The open batch is saved
+/// first. Persisted batches remain queued.
 pub fn stop(state: State) -> Effect(Message) {
   effect.from(fn(_) {
     case state.phase {
-      Opening(runtime) | Recording(runtime, ..) -> client.stop(runtime)
+      Recording(runtime, ..) -> {
+        buffer_flush(buffer(runtime))
+        client.stop(runtime)
+      }
+      Opening(runtime) -> client.stop(runtime)
       Connecting -> Nil
     }
   })
 }
+
+// Approximate encoded size of one entry: its strings plus its JSON envelope.
+fn entry_bytes(entry: retrace.Entry(wire.Event)) -> Int {
+  string.byte_size(entry.event.kind)
+  + string.byte_size(entry.event.payload)
+  + 96
+}
+
+@external(javascript, "../capture_ffi.mjs", "buffer")
+fn buffer(runtime: client.Client) -> Buffer
+
+@external(javascript, "../capture_ffi.mjs", "bufferAdd")
+fn buffer_add(
+  buffer: Buffer,
+  entry: retrace.Entry(wire.Event),
+  bytes: Int,
+  checkpoint: fn() -> #(retrace.Checkpoint(String), Int),
+  window_ms: Int,
+  max_entries: Int,
+  max_bytes: Int,
+  save: fn(retrace.Checkpoint(String), List(retrace.Entry(wire.Event))) -> Nil,
+) -> Nil
+
+@external(javascript, "../capture_ffi.mjs", "bufferFlush")
+fn buffer_flush(buffer: Buffer) -> Nil
 
 @external(javascript, "../capture_ffi.mjs", "monotonicClock")
 fn monotonic_clock() -> fn() -> Int

@@ -82,6 +82,7 @@ async function recordScenario() {
         });
       },
     },
+    0,
     () => clock,
   )[0];
   const dispatch = (message) => {

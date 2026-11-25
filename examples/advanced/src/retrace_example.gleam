@@ -45,6 +45,7 @@ fn init(_: Nil) -> #(Model, Effect(Message)) {
         True -> local_archive.transport()
         False -> client.http_transport(api.endpoint())
       },
+      1000,
     )
   #(
     Model(live, recording, fn() { Nil }),

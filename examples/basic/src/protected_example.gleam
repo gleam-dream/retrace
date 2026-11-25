@@ -36,6 +36,9 @@ fn init(_: Nil) -> #(Model, effect.Effect(Message)) {
       client.Config("http://127.0.0.1:4417", "protected-outbox", 100, 1_048_576),
       client.browser_storage(),
       client.http_transport("http://127.0.0.1:4417"),
+      // No window: each observation is its own batch, so every upload body
+      // can be checked for private values on its own.
+      0,
     )
   #(Model(live.initial(), recording), effect.map(connect, Recording))
 }

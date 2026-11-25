@@ -38,7 +38,10 @@ Commit `gleam.toml` and `manifest.toml` to retain the resolved versions.
 Start capture from session metadata. Its connection effect asks the collector to
 open a session; the collector chooses the session id and issues the write token
 every upload carries. Recording begins with the first transition observed after
-the session is open. A transport has two operations, `open` and `send`. Connect
+the session is open. Capture uploads batches: the last argument of `capture.start`
+is the flush window in milliseconds, and a window of zero sends each observation
+as its own batch. Call `capture.flush` when the page becomes hidden; `capture.stop`
+also saves the open batch. A transport has two operations, `open` and `send`. Connect
 capture once and observe each accepted transition with the previous state:
 
 <!-- prettier-ignore-start -->

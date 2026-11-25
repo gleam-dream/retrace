@@ -44,9 +44,10 @@ test("browser-check", async ({ browser, context, page }) => {
   await app.getByRole("button", { name: "Back to card" }).click();
   await app.setViewportSize({ width: 430, height: 932 });
   await expect(app.locator("[data-saved]")).toHaveAttribute("data-saved", "7");
+  // The seven transitions are saved in batches of up to one second each.
   await expect(app.locator("[data-queued]")).toHaveAttribute(
     "data-queued",
-    "7",
+    /^[1-7]$/,
   );
   await app.reload();
   disconnected = false;
