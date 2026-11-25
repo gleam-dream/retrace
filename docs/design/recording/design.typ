@@ -184,9 +184,17 @@
       #then[a failure stops capture visibly]
       #then[the application's effects are neither executed nor suppressed]
     ]
+    #behavior(title: "Batched capture groups observations", level: "boundary", area: "Capture composition")[
+      #given[a capture state with batching turned on]
+      #when[the application observes several accepted transitions before a limit closes the batch]
+      #then[they are saved and uploaded as one batch whose checkpoint is the model before the first of them]
+      #then[the saved count rises by the number of entries once that batch is saved locally]
+      #then[a flush or stop saves the open batch at once]
+    ]
     #points(
       [Capture coordinates the core recorder and client delivery through immutable state and Lustre effects. Starting returns the state and a connection effect, and the application maps capture messages into its own message type. Delivery messages are never observed recursively.],
-      [Observation takes the state before an accepted transition, the message and the safe encoders. It never runs the application reducer or effects. The adapter emits one checkpoint and event batch per observation.],
+      [Observation takes the state before an accepted transition, the message and the safe encoders. It never runs the application reducer or effects. By default the adapter emits one checkpoint and event batch per observation.],
+      [An application may turn on batched capture with a window, an entry limit and a byte limit. The adapter then holds the observations of the open batch in memory and saves them as one batch with one checkpoint, the model before the first of them, so the model is encoded and uploaded once per batch. The batch closes when the window after its first observation ends, when it reaches the entry limit, before an observation that would pass the byte limit, on an explicit flush, and on stop. The limits are clamped to 128 entries and half of the encoded batch limit. Held observations count as captured and not as saved, and are lost if the page ends before the batch closes. Replay ranges start at batch boundaries, so batching makes them coarser.],
       [Capture requires a prior connection. Observing before connection stops capture visibly instead of introducing a silent history gap. Invalid time and failed persistence also stop capture visibly, and the application stays usable.],
       [The caller owns the client lifetime and stops capture before discarding its state. Retry repairs delivery only and never repairs a failed recording. A fresh session starts after a capture failure.],
       [Capture information reports the session, captured count, locally saved count, delivery status and optional failure. A per-session monotonic clock and random session ID are supplied by default, and a clock can be injected for deterministic consumers.],

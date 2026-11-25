@@ -2,8 +2,11 @@
 //// Map the returned effects/messages into your application. They are not events
 //// to record. Stop the owned client when the application unmounts.
 
+import gleam/int
+import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/result
+import gleam/string
 import lustre/effect.{type Effect}
 import retrace
 import retrace/wire
@@ -15,8 +18,19 @@ pub opaque type State {
     recorder: retrace.Recorder,
     client: Option(client.Client),
     clock: fn() -> Int,
+    batching: Option(Batching),
   )
 }
+
+/// When to close the open batch: `window_ms` after its first observation, at
+/// `max_entries` observations, or before an observation that would take the
+/// encoded model and events past `max_bytes`.
+pub type Batching {
+  Batching(window_ms: Int, max_entries: Int, max_bytes: Int)
+}
+
+/// Mutable holder of the open batch, owned by one client runtime.
+type Buffer
 
 pub type Info {
   Info(
@@ -31,7 +45,7 @@ pub type Info {
 pub opaque type Message {
   Connected(client.Client)
   Delivery(client.Status)
-  Saved(Result(Nil, String))
+  Saved(saved: Result(Nil, String), entries: Int)
 }
 
 /// Start a new identity; every application instance needs a distinct session.
@@ -74,6 +88,7 @@ pub fn start_with_clock(
       recorder,
       None,
       clock,
+      None,
     ),
     effect.from(fn(dispatch) {
       let runtime =
@@ -85,6 +100,28 @@ pub fn start_with_clock(
   ))
 }
 
+/// Group observations into batches instead of saving one batch for each.
+/// Apply this to the state returned by start, before the first observation.
+///
+/// A batch carries one checkpoint, the model before its first observation, so
+/// the model is encoded and uploaded once per batch. Replay ranges start at
+/// batch boundaries. Observations in the open batch are held in memory: they
+/// are counted as captured but not as saved, and are lost if the page ends
+/// before `flush`, `stop` or a limit closes the batch.
+///
+/// The limits are clamped to what one wire batch can hold: 1 to 128 entries and
+/// at most half of the encoded size limit, which leaves room for JSON escaping.
+pub fn with_batching(state: State, batching: Batching) -> State {
+  State(
+    ..state,
+    batching: Some(Batching(
+      window_ms: int.max(batching.window_ms, 0),
+      max_entries: int.clamp(batching.max_entries, 1, wire.max_entries),
+      max_bytes: int.clamp(batching.max_bytes, 1, wire.max_bytes / 2),
+    )),
+  )
+}
+
 pub fn info(state: State) -> Info {
   state.info
 }
@@ -94,9 +131,12 @@ pub fn update(state: State, message: Message) -> State {
     Connected(runtime) -> State(..state, client: Some(runtime))
     Delivery(status) ->
       State(..state, info: Info(..state.info, delivery: status))
-    Saved(Ok(_)) ->
-      State(..state, info: Info(..state.info, saved: state.info.saved + 1))
-    Saved(Error(reason)) -> failed(state, reason)
+    Saved(Ok(_), entries) ->
+      State(
+        ..state,
+        info: Info(..state.info, saved: state.info.saved + entries),
+      )
+    Saved(Error(reason), _) -> failed(state, reason)
   }
 }
 
@@ -124,7 +164,17 @@ pub fn observe(
       effect.none(),
     )
     None, Some(runtime) -> {
-      let checkpoint = retrace.checkpoint(state.recorder, encode_model(before))
+      // Encoded only when a batch needs a checkpoint: once per batch.
+      let checkpoint = fn() {
+        retrace.checkpoint(state.recorder, encode_model(before))
+      }
+      let save = fn(checkpoint, entries, dispatch) {
+        client.enqueue(
+          runtime,
+          wire.Batch(state.info.session, checkpoint, entries),
+          fn(saved) { dispatch(Saved(saved, list.length(entries))) },
+        )
+      }
       case
         retrace.record(state.recorder, encode_message(message), state.clock())
       {
@@ -139,11 +189,25 @@ pub fn observe(
             info: Info(..state.info, captured: state.info.captured + 1),
           ),
           effect.from(fn(dispatch) {
-            client.enqueue(
-              runtime,
-              wire.Batch(state.info.session, checkpoint, [entry]),
-              fn(saved) { dispatch(Saved(saved)) },
-            )
+            case state.batching {
+              None -> save(checkpoint(), [entry], dispatch)
+              Some(batching) ->
+                buffer_add(
+                  buffer(runtime),
+                  entry,
+                  entry_bytes(entry),
+                  fn() {
+                    let checkpoint = checkpoint()
+                    #(checkpoint, string.byte_size(checkpoint.model))
+                  },
+                  batching.window_ms,
+                  batching.max_entries,
+                  batching.max_bytes,
+                  fn(checkpoint, entries) {
+                    save(checkpoint, entries, dispatch)
+                  },
+                )
+            }
           }),
         )
       }
@@ -181,15 +245,56 @@ pub fn retry(state: State) -> Effect(Message) {
   })
 }
 
-/// Run before discarding the application state. Persisted batches remain queued.
-pub fn stop(state: State) -> Effect(Message) {
+/// Save the open batch now instead of waiting for its window or limits. Use it
+/// before the page may end, for example when it becomes hidden. Does nothing
+/// without batching or with nothing buffered.
+pub fn flush(state: State) -> Effect(Message) {
   effect.from(fn(_) {
     case state.client {
-      Some(runtime) -> client.stop(runtime)
+      Some(runtime) -> buffer_flush(buffer(runtime))
       None -> Nil
     }
   })
 }
+
+/// Run before discarding the application state. The open batch is saved
+/// first. Persisted batches remain queued.
+pub fn stop(state: State) -> Effect(Message) {
+  effect.from(fn(_) {
+    case state.client {
+      Some(runtime) -> {
+        buffer_flush(buffer(runtime))
+        client.stop(runtime)
+      }
+      None -> Nil
+    }
+  })
+}
+
+// Approximate encoded size of one entry: its strings plus its JSON envelope.
+fn entry_bytes(entry: retrace.Entry(wire.Event)) -> Int {
+  string.byte_size(entry.event.kind)
+  + string.byte_size(entry.event.payload)
+  + 96
+}
+
+@external(javascript, "../capture_ffi.mjs", "buffer")
+fn buffer(runtime: client.Client) -> Buffer
+
+@external(javascript, "../capture_ffi.mjs", "bufferAdd")
+fn buffer_add(
+  buffer: Buffer,
+  entry: retrace.Entry(wire.Event),
+  bytes: Int,
+  checkpoint: fn() -> #(retrace.Checkpoint(String), Int),
+  window_ms: Int,
+  max_entries: Int,
+  max_bytes: Int,
+  save: fn(retrace.Checkpoint(String), List(retrace.Entry(wire.Event))) -> Nil,
+) -> Nil
+
+@external(javascript, "../capture_ffi.mjs", "bufferFlush")
+fn buffer_flush(buffer: Buffer) -> Nil
 
 @external(javascript, "../capture_ffi.mjs", "randomId")
 fn random_id() -> String
