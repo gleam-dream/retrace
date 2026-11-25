@@ -124,12 +124,18 @@ const retryDelay = (failures) => {
 };
 // A transport opens sessions and uploads batches; each returns the collector's
 // JSON reply. The runtime owns deadlines. A transport marks a permanent
-// refusal by throwing an Error whose `rejected` is true.
+// refusal by throwing an Error whose `rejected` is true. Its `keepalive`
+// operation starts an upload that outlives the page and reports nothing back;
+// the runtime uses it when the page is hidden.
 export const httpTransport = (endpoint) => {
+  const base = endpoint.replace(/\/$/, "");
+  const request = {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+  };
   const post = async (path, body, signal) => {
-    const response = await fetch(`${endpoint.replace(/\/$/, "")}${path}`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
+    const response = await fetch(`${base}${path}`, {
+      ...request,
       body,
       signal,
     });
@@ -147,8 +153,53 @@ export const httpTransport = (endpoint) => {
   return {
     open: (metadata, signal) => post("/sessions", metadata, signal),
     send: (body, signal) => post("/batches", body, signal),
+    keepalive: (body) => {
+      fetch(`${base}/batches`, { ...request, body, keepalive: true }).then(
+        (response) => response.body?.cancel(),
+        () => {},
+      );
+    },
   };
 };
+// Browsers refuse keepalive requests once their bodies in flight pass 64 KiB.
+const KEEPALIVE_BYTES = 64000;
+// Unacknowledged batches this runtime saved, oldest first, kept in memory only
+// while they fit the keepalive budget, so a hidden page can send them without
+// an asynchronous storage read. After the first batch that does not fit,
+// nothing is held until the queue has drained: a later batch must not overtake.
+function hold(client, body, bytes) {
+  const entry = { body, bytes, key: null, handed: false };
+  if (client.overflow || client.heldBytes + bytes > KEEPALIVE_BYTES)
+    client.overflow = true;
+  else {
+    client.held.push(entry);
+    client.heldBytes += bytes;
+  }
+  return entry;
+}
+function release(client, match) {
+  client.held = client.held.filter((entry) => {
+    if (!match(entry)) return true;
+    client.heldBytes -= entry.bytes;
+    return false;
+  });
+}
+// The page may end without running more code. Hand each held batch to the
+// transport once; the saved copy stays queued until an acknowledgement, and the
+// collector admits a repeated batch idempotently.
+function handOver(client) {
+  if (client.stopped || typeof client.transport?.keepalive !== "function")
+    return;
+  for (const entry of client.held) {
+    if (entry.handed) continue;
+    entry.handed = true;
+    try {
+      client.transport.keepalive(entry.body);
+    } catch {
+      // Best effort: the upload loop still owns delivery.
+    }
+  }
+}
 export function start(endpoint, name, maxItems, maxBytes, onStatus) {
   return startWith(
     name,
@@ -188,7 +239,26 @@ export function startWith(name, maxItems, maxBytes, onStatus, open, transport) {
     reported: [],
     rejected: new Set(),
     opening: null,
+    held: [],
+    heldBytes: 0,
+    overflow: false,
+    unlisten: () => {},
   };
+  if (typeof document !== "undefined" && document.addEventListener) {
+    // Hidden is the last state a page reliably observes; pagehide covers
+    // browsers that end a page without it.
+    const hidden = () => {
+      if (document.visibilityState === "hidden") handOver(client);
+    };
+    const leaving = () => handOver(client);
+    document.addEventListener("visibilitychange", hidden);
+    globalThis.addEventListener?.("pagehide", leaving);
+    client.unlisten = () => {
+      document.removeEventListener("visibilitychange", hidden);
+      globalThis.removeEventListener?.("pagehide", leaving);
+    };
+  }
+
   client.storage = valid
     ? Promise.resolve().then(() => open(name, maxItems, maxBytes))
     : Promise.reject(new Error("Invalid queue configuration"));
@@ -214,6 +284,7 @@ export function enqueue(client, body, saved) {
   }
   client.pendingItems++;
   client.pendingBytes += bytes;
+  const entry = hold(client, body, bytes);
   client.saving = client.saving
     .then(async () => {
       if (client.writeFailed)
@@ -224,12 +295,14 @@ export function enqueue(client, body, saved) {
           "Collector rejected this session. Start a new session.",
         );
       const key = `${batch.session.id}:${String(batch.checkpoint.sequence).padStart(16, "0")}`;
+      entry.key = key;
       const storage = await client.storage;
       await storage.put(key, body);
       client.saved++;
       saved(true, "Saved locally");
     })
     .catch((error) => {
+      release(client, (held) => held === entry);
       client.fault = true;
       client.writeFailed = true;
       saved(false, error.message || "Recording persistence failed");
@@ -313,7 +386,11 @@ export function retry(client) {
     for (;;) {
       client.saved = 0;
       const rows = sorted(await storage.all());
-      if (!rows.length || client.stopped) break;
+      if (!rows.length || client.stopped) {
+        // Drained, with no save in progress: later batches may be held again.
+        if (!rows.length && !client.pendingItems) client.overflow = false;
+        break;
+      }
       // Keys discarded ahead of the current row, and how many remain ahead.
       const gone = new Set();
       let ahead = 0;
@@ -345,6 +422,7 @@ export function retry(client) {
           if (client.stopped) return;
           if (!client.rejected.has(batch.session.id)) {
             await storage.remove(row.key);
+            release(client, (held) => held.key === row.key);
             client.ack += batch.entries.length;
             client.failures = 0;
             continue;
@@ -355,6 +433,7 @@ export function retry(client) {
         for (const other of rows.slice(index))
           if (!gone.has(other.key) && sessionOf(other) === batch.session.id) {
             await storage.remove(other.key);
+            release(client, (held) => held.key === other.key);
             discarded++;
             if (other !== row) {
               gone.add(other.key);
@@ -408,6 +487,7 @@ export function retry(client) {
 
 export function stop(client) {
   client.stopped = true;
+  client.unlisten();
   clearTimeout(client.timer);
   client.controller?.abort();
   // Do not close storage while an accepted save or upload deletion is pending.

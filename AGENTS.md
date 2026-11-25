@@ -23,6 +23,7 @@ bash dev/git-consumer-check.sh            # independent Git consumers of the com
 npm --prefix examples/advanced test -- progressive-viewer-browser-check
 node --test packages/retrace_frontend/test/*.test.mjs
 npm --prefix examples/advanced test -- storage-browser-check        # IndexedDB queue limits and save cost; no service needed
+npm --prefix examples/advanced test -- unload-browser-check         # hand-over of unacknowledged batches as a page leaves; no service needed
 node --test examples/advanced/dev/*.test.mjs   # build identity, custom archive, history (after gleam build)
 (cd examples/basic && node --test *.test.mjs)    # adoption walk-through and replay (after gleam build)
 ```

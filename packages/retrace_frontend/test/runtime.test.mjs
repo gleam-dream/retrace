@@ -586,6 +586,196 @@ test("the reported queue length follows uploads and discards within one pass", a
   }
 });
 
+// A page stand-in: the runtime listens on `document` when one exists.
+function page(t) {
+  const document = new EventTarget();
+  document.visibilityState = "visible";
+  const previous = globalThis.document;
+  globalThis.document = document;
+  t.after(() => {
+    if (previous === undefined) delete globalThis.document;
+    else globalThis.document = previous;
+  });
+  return {
+    hide() {
+      document.visibilityState = "hidden";
+      document.dispatchEvent(new Event("visibilitychange"));
+    },
+    show() {
+      document.visibilityState = "visible";
+      document.dispatchEvent(new Event("visibilitychange"));
+    },
+  };
+}
+const sized = (n, bytes) =>
+  JSON.stringify({
+    session: { id: "inventory" },
+    checkpoint: { sequence: n, model: "x".repeat(bytes) },
+    entries: [{}],
+  });
+const sequences = (bodies) =>
+  bodies.map((body) => JSON.parse(body).checkpoint.sequence);
+
+test("a hidden page hands unacknowledged batches to the transport's keepalive send", async (t) => {
+  const tab = page(t),
+    store = memory(),
+    handed = [];
+  let online = false,
+    acknowledged = 0;
+  const transport = send(async (body, signal) => {
+    if (online) return acknowledge(body);
+    // A stalled upload: it ends only when the runtime aborts it.
+    return new Promise((_, reject) =>
+      signal.addEventListener("abort", () => reject(Error("aborted"))),
+    );
+  });
+  transport.keepalive = (body) => handed.push(body);
+  const client = startWith(
+    "queue",
+    100,
+    1000000,
+    (_, ack) => (acknowledged = ack),
+    async () => store,
+    transport,
+  );
+  let recovered;
+  try {
+    await settle();
+    tab.hide();
+    assert.deepEqual(handed, []);
+    tab.show();
+    await new Promise((r) => enqueue(client, batch(0), r));
+    // Still being saved when the page hides: handed over from memory.
+    enqueue(client, batch(1), () => {});
+    tab.hide();
+    assert.deepEqual(sequences(handed), [0, 1]);
+    // Each batch is handed over once; the upload loop owns later retries.
+    tab.show();
+    tab.hide();
+    assert.equal(handed.length, 2);
+    // Shutdown aborts the regular upload, not what was handed over, and the
+    // batches stay saved until a matching acknowledgement.
+    await settle();
+    stop(client);
+    await settle();
+    assert.equal((await store.all()).length, 2);
+    tab.show();
+    tab.hide();
+    assert.equal(handed.length, 2);
+    online = true;
+    recovered = startWith(
+      "queue",
+      100,
+      1000000,
+      (_, ack) => (acknowledged = ack),
+      async () => store,
+      transport,
+    );
+    await until(() => acknowledged === 2);
+    tab.show();
+    tab.hide();
+    assert.equal(handed.length, 2);
+  } finally {
+    stop(client);
+    if (recovered) stop(recovered);
+  }
+});
+
+test("the hand-over keeps batch order and stays within the keepalive budget", async (t) => {
+  const tab = page(t),
+    store = memory(),
+    handed = [];
+  let online = false,
+    acknowledged = 0;
+  const transport = send(async (body) => {
+    if (!online) throw Error("offline");
+    return acknowledge(body);
+  });
+  transport.keepalive = (body) => handed.push(body);
+  const client = startWith(
+    "queue",
+    100,
+    1000000,
+    (_, ack) => (acknowledged = ack),
+    async () => store,
+    transport,
+  );
+  const save = (body) => new Promise((r) => enqueue(client, body, r));
+  try {
+    await settle();
+    // 64 KiB is the browser's limit for keepalive bodies in flight.
+    await save(sized(0, 30000));
+    await save(sized(1, 30000));
+    await save(sized(2, 30000));
+    await save(sized(3, 100));
+    tab.hide();
+    // Batch 2 does not fit, and batch 3 must not overtake it.
+    assert.deepEqual(sequences(handed), [0, 1]);
+    tab.show();
+    online = true;
+    retry(client);
+    await until(() => acknowledged === 4);
+    // Once the queue has drained, later batches are handed over again.
+    online = false;
+    await save(sized(4, 100));
+    tab.hide();
+    assert.deepEqual(sequences(handed), [0, 1, 4]);
+  } finally {
+    stop(client);
+  }
+});
+
+test("a transport without a keepalive send is left alone when the page hides", async (t) => {
+  const tab = page(t),
+    store = memory();
+  const client = startWith(
+    "queue",
+    10,
+    10000,
+    () => {},
+    async () => store,
+    send(async () => {
+      throw Error("offline");
+    }),
+  );
+  try {
+    await new Promise((r) => enqueue(client, batch(), r));
+    tab.hide();
+    assert.equal((await store.all()).length, 1);
+  } finally {
+    stop(client);
+  }
+});
+
+test("the packaged transport's keepalive send posts the batch and ignores the outcome", async () => {
+  const received = [];
+  const server = http.createServer((req, res) => {
+    let body = "";
+    req.on("data", (chunk) => (body += chunk));
+    req.on("end", () => {
+      received.push([req.method, req.url, req.headers["content-type"], body]);
+      res.writeHead(503);
+      res.end();
+    });
+  });
+  await new Promise((r) => server.listen(0, "127.0.0.1", r));
+  try {
+    const transport = httpTransport(
+      `http://127.0.0.1:${server.address().port}/`,
+    );
+    transport.keepalive(batch(7));
+    await until(() => received.length === 1);
+    assert.deepEqual(received[0], [
+      "POST",
+      "/batches",
+      "application/json",
+      batch(7),
+    ]);
+  } finally {
+    await new Promise((r) => server.close(r));
+  }
+});
+
 test("an unanswered session request is retried before uploads, and its grant reaches the caller once", async () => {
   const requests = [];
   const server = http.createServer((req, res) => {
