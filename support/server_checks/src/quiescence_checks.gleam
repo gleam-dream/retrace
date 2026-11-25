@@ -10,6 +10,7 @@ import gleam/io
 import gleam/list
 import gleam/option.{None, Some}
 import gleam/string
+import opened
 import pog
 import retrace
 import retrace/wire
@@ -94,30 +95,30 @@ pub fn run(db: pog.Connection) -> Nil {
   )
 }
 
-fn session(id: String) -> wire.Session {
-  wire.Session(id, "quiescence-check", "counter-v1", "counter-v1", "erlang")
-}
-
 /// Admit one more batch of a session and return its recorder.
 fn admit(
   db: pog.Connection,
-  session: wire.Session,
+  grant: wire.Grant,
   recorder: retrace.Recorder,
 ) -> retrace.Recorder {
   let checkpoint = retrace.checkpoint(recorder, "0")
   let assert Ok(#(next, entry)) =
     retrace.record(recorder, wire.Event("Add", "1"), 5)
-  let assert Ok(_) = server.accept(db, wire.Batch(session, checkpoint, [entry]))
+  let assert Ok(_) =
+    server.accept(
+      db,
+      wire.Upload(grant.token, wire.Batch(grant.session, checkpoint, [entry])),
+    )
   next
 }
 
 fn admitted(
   db: pog.Connection,
-  id: String,
-) -> #(wire.Session, retrace.Recorder) {
-  let session = session(id)
-  let assert Ok(#(recorder, _)) = retrace.start(wire.origin(session), "0")
-  #(session, admit(db, session, recorder))
+  label: String,
+) -> #(wire.Grant, retrace.Recorder) {
+  let grant = opened.grant(db, label)
+  let assert Ok(#(recorder, _)) = retrace.start(wire.origin(grant.session), "0")
+  #(grant, admit(db, grant, recorder))
 }
 
 /// The old signal a host polled. It means definitive completion only.
@@ -155,7 +156,7 @@ fn erase_until_erased(
 // succeeds, then the PUT publishes. Erasure must not have reported completion.
 fn regression(db: pog.Connection) -> Nil {
   let provider = provider()
-  let #(session, _) = admitted(db, "uncertain-put")
+  let #(wire.Grant(session:, ..), _) = admitted(db, "uncertain-put")
   let assert Error(server.Storage(server.Unavailable)) =
     server.archive_segment_next(db, uncertain(provider), 0)
   assert objects(provider) == []
@@ -193,7 +194,7 @@ fn regression(db: pog.Connection) -> Nil {
 
 fn normal_completion(db: pog.Connection) -> Nil {
   let provider = provider()
-  let #(session, _) = admitted(db, "normal-archive")
+  let #(wire.Grant(session:, ..), _) = admitted(db, "normal-archive")
   let assert Ok(True) = server.archive_segment_next(db, accepting(provider), 0)
   assert list.length(objects(provider)) == 1
   let assert [server.WriteAttempt(state: server.Completed, ..)] =
@@ -215,7 +216,7 @@ fn normal_completion(db: pog.Connection) -> Nil {
 
 fn worker_dies_after_dispatch(db: pog.Connection) -> Nil {
   let provider = provider()
-  let #(session, _) = admitted(db, "dead-worker")
+  let #(wire.Grant(session:, ..), _) = admitted(db, "dead-worker")
   let entered = process.new_subject()
   let hanging =
     server.ObjectStore(
@@ -254,7 +255,7 @@ fn worker_dies_after_dispatch(db: pog.Connection) -> Nil {
 
 fn paused_worker_after_fence(db: pog.Connection) -> Nil {
   let provider = provider()
-  let #(session, _) = admitted(db, "paused-worker")
+  let #(wire.Grant(session:, ..), _) = admitted(db, "paused-worker")
   let assert Error(server.Storage(server.Unavailable)) =
     server.archive_segment_next(db, uncertain(provider), 0)
   let first = puts(provider)
@@ -303,11 +304,12 @@ fn wait_for_lock_waiter(db: pog.Connection, left: Int) -> Nil {
 // key stays accounted for and is deleted once its own attempts are proven.
 fn multiple_attempts_and_keys(db: pog.Connection) -> Nil {
   let provider = provider()
-  let #(session, recorder) = admitted(db, "many-keys")
+  let #(grant, recorder) = admitted(db, "many-keys")
+  let session = grant.session
   let assert Ok(True) = server.archive_segment_next(db, accepting(provider), 0)
-  let recorder = admit(db, session, recorder)
+  let recorder = admit(db, grant, recorder)
   let assert Ok(True) = server.archive_segment_next(db, accepting(provider), 0)
-  let _ = admit(db, session, recorder)
+  let _ = admit(db, grant, recorder)
   let assert Error(server.Storage(_)) =
     server.archive_segment_next(db, uncertain(provider), 0)
   let assert Error(server.Storage(_)) =
@@ -341,7 +343,7 @@ fn multiple_attempts_and_keys(db: pog.Connection) -> Nil {
 
 fn failed_deletion_is_retryable(db: pog.Connection) -> Nil {
   let provider = provider()
-  let #(session, _) = admitted(db, "failed-delete")
+  let #(wire.Grant(session:, ..), _) = admitted(db, "failed-delete")
   let assert Ok(True) = server.archive_segment_next(db, accepting(provider), 0)
   let assert Ok(_) = server.fence(db, session.id)
   let failing =
@@ -360,7 +362,7 @@ fn failed_deletion_is_retryable(db: pog.Connection) -> Nil {
 
 fn idempotent_fence_and_erasure(db: pog.Connection) -> Nil {
   let provider = provider()
-  let #(session, _) = admitted(db, "idempotent")
+  let #(wire.Grant(session:, ..), _) = admitted(db, "idempotent")
   let assert Ok(True) = server.archive_segment_next(db, accepting(provider), 0)
   let assert Ok(_) = server.fence(db, session.id)
   let assert Ok(_) = server.fence(db, session.id)
@@ -379,7 +381,7 @@ fn idempotent_fence_and_erasure(db: pog.Connection) -> Nil {
 
 fn rolled_back_fence(db: pog.Connection) -> Nil {
   let provider = provider()
-  let #(session, _) = admitted(db, "rolled-back-fence")
+  let #(wire.Grant(session:, ..), _) = admitted(db, "rolled-back-fence")
   let assert Error(pog.TransactionRolledBack(Nil)) =
     pog.transaction(db, fn(tx) {
       let assert Ok(_) = server.fence_in_transaction(tx, session.id)
@@ -397,7 +399,7 @@ fn rolled_back_fence(db: pog.Connection) -> Nil {
 // recipe only trusts time since a failure that was actually returned.
 fn paused_after_admission(db: pog.Connection) -> Nil {
   let provider = provider()
-  let #(session, _) = admitted(db, "paused-after-admission")
+  let #(wire.Grant(session:, ..), _) = admitted(db, "paused-after-admission")
   let entered = process.new_subject()
   let finished = process.new_subject()
   let paused =
@@ -486,7 +488,7 @@ fn host_decides_from_failure_age(db: pog.Connection) -> Nil {
   let assert server.MayPublish = directory.quiesced(at(server.InFlight))
 
   let provider = provider()
-  let #(session, _) = admitted(db, "host-failure-age-policy")
+  let #(wire.Grant(session:, ..), _) = admitted(db, "host-failure-age-policy")
   let assert Error(_) = server.archive_segment_next(db, uncertain(provider), 0)
   let assert Ok(_) = server.fence(db, session.id)
   let failed_for = fn(limit) {
@@ -508,7 +510,7 @@ fn host_decides_from_failure_age(db: pog.Connection) -> Nil {
 // has not yet passed.
 fn elapsed_time_is_floored(db: pog.Connection) -> Nil {
   let provider = provider()
-  let #(session, _) = admitted(db, "floored-time")
+  let #(wire.Grant(session:, ..), _) = admitted(db, "floored-time")
   let assert Error(_) = server.archive_segment_next(db, uncertain(provider), 0)
   let assert Ok(_) =
     pog.query(
@@ -581,7 +583,7 @@ fn restricted_runtime_role(db: pog.Connection) -> Nil {
   let assert Ok(started) = pog.start(config)
   let runtime = started.data
   let provider = provider()
-  let #(session, _) = admitted(db, "restricted-runtime")
+  let #(wire.Grant(session:, ..), _) = admitted(db, "restricted-runtime")
   // Without sequence USAGE the attempt cannot be admitted.
   let assert Error(server.Database(_)) =
     server.archive_segment_next(runtime, accepting(provider), 0)
