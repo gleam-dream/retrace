@@ -381,3 +381,43 @@ test("a delivered batch resets the backoff", async () => {
     mock.restoreAll();
   }
 });
+
+test("a save during a backoff wait does not start another upload attempt", async () => {
+  mock.timers.enable({ apis: ["setTimeout"] });
+  mock.method(Math, "random", () => 1);
+  const store = memory();
+  await store.put("inventory:0000000000000000", batch());
+  let attempts = 0;
+  const client = startWith(
+    "queue",
+    10,
+    10000,
+    () => {},
+    async () => store,
+    async () => {
+      attempts++;
+      throw Error("offline");
+    },
+  );
+  try {
+    await settle();
+    assert.equal(attempts, 1);
+    for (let n = 1; n <= 3; n++) {
+      await new Promise((r) => enqueue(client, batch(n), r));
+      await settle();
+    }
+    assert.equal((await store.all()).length, 4);
+    assert.equal(attempts, 1);
+    // The wait still ends on time, and an explicit retry does not wait.
+    mock.timers.tick(1500);
+    await settle();
+    assert.equal(attempts, 2);
+    retry(client);
+    await settle();
+    assert.equal(attempts, 3);
+  } finally {
+    stop(client);
+    mock.timers.reset();
+    mock.restoreAll();
+  }
+});

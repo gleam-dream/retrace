@@ -128,6 +128,7 @@ export function startWith(name, maxItems, maxBytes, onStatus, open, transport) {
     fault: false,
     controller: null,
     failures: 0,
+    waiting: false,
     rejected: new Set(),
   };
   client.storage = valid
@@ -177,7 +178,8 @@ export function enqueue(client, body, saved) {
     .finally(() => {
       client.pendingItems--;
       client.pendingBytes -= bytes;
-      retry(client);
+      // A save must not cut a backoff wait short; the pending pass uploads it.
+      if (!client.waiting) retry(client);
     });
 }
 
@@ -186,6 +188,7 @@ const sessionOf = (row) => JSON.parse(row.body).session.id;
 export function retry(client) {
   if (client.stopped || client.busy) return;
   clearTimeout(client.timer);
+  client.waiting = false;
   client.busy = true;
   let failed = false;
   (async () => {
@@ -264,6 +267,7 @@ export function retry(client) {
       client.busy = false;
       if (client.stopped) return;
       client.failures = failed ? client.failures + 1 : 0;
+      client.waiting = failed;
       client.timer = setTimeout(
         () => retry(client),
         failed ? retryDelay(client.failures) : 1500,
