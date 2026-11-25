@@ -304,7 +304,7 @@ test("a collector that refuses to open the session stops capture visibly", async
 
 // Governing design: Capture coordination / Batched capture groups observations.
 const settle = () => new Promise((r) => setImmediate(r));
-async function batched(flushAfterMs, t) {
+async function batched(flushAfterMs, t, keepalive) {
   t.mock.timers.enable({ apis: ["setTimeout"] });
   const rows = new Map(),
     received = [],
@@ -322,6 +322,7 @@ async function batched(flushAfterMs, t) {
       ack: b.entries.at(-1).sequence,
     });
   });
+  if (keepalive) transport.keepalive = keepalive;
   const recording = { now: 0, received, encoded, state: null };
   let effect;
   [recording.state, effect] = capture.start_with_clock(
@@ -456,4 +457,32 @@ test("flush and stop save held observations without waiting for the window", asy
   assert.equal(r.received.length, 1);
   // A flush with nothing held does nothing.
   r.run(capture.flush(r.state));
+});
+
+// Governing design: Capture coordination / the open batch is saved before the
+// client hands its unacknowledged batches over when the page leaves.
+test("a hidden page saves the open batch and hands it over with the rest", async (t) => {
+  const document = new EventTarget();
+  document.visibilityState = "visible";
+  const previous = globalThis.document;
+  globalThis.document = document;
+  t.after(() => {
+    if (previous === undefined) delete globalThis.document;
+    else globalThis.document = previous;
+  });
+  const handed = [];
+  const r = await batched(60000, t, (body) => handed.push(JSON.parse(body)));
+  r.observe({ value: 0 }, 2);
+  r.observe({ value: 2 }, 3);
+  document.visibilityState = "hidden";
+  document.dispatchEvent(new globalThis.Event("visibilitychange"));
+  // The hand-over is synchronous: the page may run no more code after it.
+  assert.deepEqual(
+    handed.map((b) => [b.checkpoint.sequence, b.entries.length]),
+    [[0, 2]],
+  );
+  await settle();
+  await settle();
+  assert.equal(capture.info(r.state).saved, 2);
+  r.run(capture.stop(r.state));
 });

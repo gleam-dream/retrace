@@ -1,4 +1,5 @@
 import { toList } from "./gleam.mjs";
+import { beforeHandOver } from "./client_ffi.mjs";
 
 export function monotonicClock() {
   const started = performance.now();
@@ -7,10 +8,15 @@ export function monotonicClock() {
 
 // One open batch per client runtime. The holder keeps the checkpoint, the
 // entries and the window timer; the limits and the save are decided by callers.
+// When the page leaves, the runtime closes the open batch before it hands its
+// unacknowledged batches over, so the last observations leave with the page.
 const buffers = new WeakMap();
 export function buffer(runtime) {
   let held = buffers.get(runtime);
-  if (!held) buffers.set(runtime, (held = { open: null }));
+  if (!held) {
+    buffers.set(runtime, (held = { open: null }));
+    beforeHandOver(runtime, () => bufferFlush(held));
+  }
   return held;
 }
 export function bufferFlush(held) {

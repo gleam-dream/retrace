@@ -40,8 +40,10 @@ open a session; the collector chooses the session id and issues the write token
 every upload carries. Recording begins with the first transition observed after
 the session is open. Capture uploads batches: the last argument of `capture.start`
 is the flush window in milliseconds, and a window of zero sends each observation
-as its own batch. Call `capture.flush` when the page becomes hidden; `capture.stop`
-also saves the open batch. A transport has two operations, `open` and `send`. Connect
+as its own batch. When the page becomes hidden or navigates away, the client saves
+the open batch and hands it over with the other unacknowledged batches;
+`capture.flush` and `capture.stop` also save it. A transport has two operations,
+`open` and `send`, and may add a `keepalive` send for that hand-over. Connect
 capture once and observe each accepted transition with the previous state:
 
 <!-- prettier-ignore-start -->

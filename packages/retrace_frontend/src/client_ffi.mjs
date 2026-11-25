@@ -184,12 +184,24 @@ function release(client, match) {
     return false;
   });
 }
+// Run `close` synchronously when the page leaves, before the hand-over, so
+// that work a caller still holds in memory (capture's open batch) is enqueued,
+// and therefore held, in time to be handed over with the rest.
+export function beforeHandOver(client, close) {
+  client.closers.push(close);
+}
 // The page may end without running more code. Hand each held batch to the
 // transport once; the saved copy stays queued until an acknowledgement, and the
 // collector admits a repeated batch idempotently.
 function handOver(client) {
-  if (client.stopped || typeof client.transport?.keepalive !== "function")
-    return;
+  if (client.stopped) return;
+  for (const close of client.closers)
+    try {
+      close();
+    } catch {
+      // Best effort: a failed close leaves the hand-over of saved batches.
+    }
+  if (typeof client.transport?.keepalive !== "function") return;
   for (const entry of client.held) {
     if (entry.handed) continue;
     entry.handed = true;
@@ -242,6 +254,7 @@ export function startWith(name, maxItems, maxBytes, onStatus, open, transport) {
     held: [],
     heldBytes: 0,
     overflow: false,
+    closers: [],
     unlisten: () => {},
   };
   if (typeof document !== "undefined" && document.addEventListener) {

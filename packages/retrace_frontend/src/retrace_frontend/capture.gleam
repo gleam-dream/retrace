@@ -62,7 +62,9 @@ pub opaque type Message {
 /// observation, so the model is encoded and uploaded once per batch, and replay
 /// ranges start at batch boundaries. With a window of zero every observation is
 /// saved at once as its own batch. Held observations count as captured and not
-/// as saved, and are lost if the page ends before their batch closes.
+/// as saved. In a browser the open batch also closes when the page becomes
+/// hidden or navigates away, just before the client hands its unacknowledged
+/// batches over, so the last observations leave with the page.
 pub fn start(
   metadata: wire.Metadata,
   config: client.Config,
@@ -241,9 +243,9 @@ pub fn retry(state: State) -> Effect(Message) {
   })
 }
 
-/// Save the open batch now instead of waiting for its window. Use it before
-/// the page may end, for example when it becomes hidden. Does nothing when no
-/// observation is held.
+/// Save the open batch now instead of waiting for its window. A browser page
+/// that becomes hidden or navigates away already does this before the hand-over.
+/// Does nothing when no observation is held.
 pub fn flush(state: State) -> Effect(Message) {
   effect.from(fn(_) {
     case state.phase {
