@@ -67,8 +67,11 @@ export const storage = (open, explain) => async (name, items, bytes) => {
   };
 };
 
-export const transport = (send, explain, rejected) => async (body, signal) => {
-  // Do not even ask the provider to construct work after a prior abort.
-  if (signal.aborted) throw Error("Upload cancelled");
-  return request(send(body), explain, signal, rejected);
+export const transport = (open, send, explain, rejected) => {
+  const call = (operation) => async (body, signal) => {
+    // Do not even ask the provider to construct work after a prior abort.
+    if (signal.aborted) throw Error("Upload cancelled");
+    return request(operation(body), explain, signal, rejected);
+  };
+  return { open: call(open), send: call(send) };
 };

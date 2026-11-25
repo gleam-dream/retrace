@@ -6,7 +6,10 @@ import * as coreUsage from "./build/dev/javascript/retrace_inventory/usage_core.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { toList } from "./build/dev/javascript/retrace_inventory/gleam.mjs";
-import { decode_batch } from "./build/dev/javascript/retrace/retrace/wire.mjs";
+import {
+  decode_batch,
+  Metadata,
+} from "./build/dev/javascript/retrace/retrace/wire.mjs";
 import * as capture from "./build/dev/javascript/retrace_frontend/retrace_frontend/capture.mjs";
 import { Config } from "./build/dev/javascript/retrace_frontend/retrace_frontend/client.mjs";
 import {
@@ -40,13 +43,22 @@ function memoryDelivery() {
       put: async (key, body) => void rows.set(key, body),
       remove: async (key) => void rows.delete(key),
     }),
-    transport: async (body) => {
-      const batch = JSON.parse(body);
-      delivered.push(batch);
-      return JSON.stringify({
-        session_id: batch.session.id,
-        ack: batch.entries.at(-1).sequence,
-      });
+    transport: {
+      // The collector chooses the session id and issues the write token.
+      open: async (metadata) =>
+        JSON.stringify({
+          session: { id: "adoption-session", ...JSON.parse(metadata) },
+          token: "adoption-token",
+        }),
+      send: async (body) => {
+        const { token, ...batch } = JSON.parse(body);
+        assert.equal(token, "adoption-token");
+        delivered.push(batch);
+        return JSON.stringify({
+          session_id: batch.session.id,
+          ack: batch.entries.at(-1).sequence,
+        });
+      },
     },
   };
 }
@@ -55,14 +67,8 @@ function memoryDelivery() {
 // so a failed assertion cannot leave delivery timers running.
 async function withRecording(clock, body) {
   const delivery = memoryDelivery();
-  const session = capture.session(
-    "Warehouse",
-    domain.build,
-    domain.contract,
-    "web",
-  );
   const started = capture.start_with_clock(
-    session,
+    new Metadata("Warehouse", domain.build, domain.contract, "web"),
     new Config("local", "adoption-outbox", 100, 1_048_576),
     delivery.storage,
     delivery.transport,
@@ -74,6 +80,8 @@ async function withRecording(clock, body) {
     state = capture.update(state, message);
   };
   run(connect, dispatch);
+  // Recording begins once the collector has opened the session.
+  await until(() => capture.info(state).session[0]);
   const recording = {
     delivery,
     get info() {

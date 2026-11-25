@@ -7,7 +7,10 @@ import {
   retry,
   stop,
   httpTransport,
+  openSession,
 } from "../src/client_ffi.mjs";
+// A transport that only uploads; these checks never open a session.
+const send = (upload) => ({ send: upload });
 function memory() {
   const rows = new Map();
   return {
@@ -85,9 +88,9 @@ test("pending item admission is bounded before slow persistence", async () => {
       await ready;
       return store;
     },
-    async () => {
+    send(async () => {
       throw Error("offline");
-    },
+    }),
   );
   enqueue(client, batch(), (ok) => results.push(ok));
   enqueue(client, batch(1), (ok) => results.push(ok));
@@ -105,9 +108,9 @@ test("pending byte budget refuses oversized capture immediately", () => {
     1,
     () => {},
     async () => memory(),
-    async () => {
+    send(async () => {
       throw Error("offline");
-    },
+    }),
   );
   let outcome;
   enqueue(client, batch(), (ok) => (outcome = ok));
@@ -125,11 +128,11 @@ test("custom transport retains bad receipt and retries identical content", async
     10000,
     (...s) => statuses.push(s),
     async () => store,
-    async (body, signal) => {
+    send(async (body, signal) => {
       assert.ok(signal instanceof AbortSignal);
       sent.push(body);
       return JSON.stringify({ session_id: "inventory", ack: valid ? 1 : 99 });
-    },
+    }),
   );
   try {
     enqueue(client, batch(), () => {});
@@ -185,7 +188,7 @@ test("shutdown aborts a stalled body and a fresh runtime recovers the outbox", a
         acknowledged = ack;
       },
       async () => store,
-      async () => '{"session_id":"inventory","ack":1}',
+      send(async () => '{"session_id":"inventory","ack":1}'),
     );
     await until(() => acknowledged === 1);
     assert.equal((await store.all()).length, 0);
@@ -302,10 +305,10 @@ test("failed uploads back off exponentially with jitter up to a cap", async () =
       10000,
       () => {},
       async () => store,
-      async () => {
+      send(async () => {
         times.push(now);
         throw Error("offline");
-      },
+      }),
     );
     try {
       await settle();
@@ -344,7 +347,7 @@ test("a delivered batch resets the backoff", async () => {
     10000,
     () => {},
     async () => store,
-    async (body) => {
+    send(async (body) => {
       times.push(now);
       if (!online) throw Error("offline");
       const sent = JSON.parse(body);
@@ -352,7 +355,7 @@ test("a delivered batch resets the backoff", async () => {
         session_id: "inventory",
         ack: sent.checkpoint.sequence + 1,
       });
-    },
+    }),
   );
   const advance = async (ms) => {
     for (const end = now + ms; now < end;) {
@@ -394,10 +397,10 @@ test("a save during a backoff wait does not start another upload attempt", async
     10000,
     () => {},
     async () => store,
-    async () => {
+    send(async () => {
       attempts++;
       throw Error("offline");
-    },
+    }),
   );
   try {
     await settle();
@@ -419,5 +422,52 @@ test("a save during a backoff wait does not start another upload attempt", async
     stop(client);
     mock.timers.reset();
     mock.restoreAll();
+  }
+});
+
+test("an unanswered session request is retried before uploads, and its grant reaches the caller once", async () => {
+  const requests = [];
+  const server = http.createServer((req, res) => {
+    let body = "";
+    req.on("data", (chunk) => (body += chunk));
+    req.on("end", () => {
+      requests.push([req.url, body]);
+      if (requests.length === 1) {
+        res.writeHead(503).end();
+        return;
+      }
+      res.writeHead(201, { "content-type": "application/json" });
+      res.end('{"session":{"id":"issued"},"token":"t"}');
+    });
+  });
+  await new Promise((r) => server.listen(0, "127.0.0.1", r));
+  const grants = [];
+  const client = startWith(
+    "queue",
+    10,
+    10000,
+    () => {},
+    async () => memory(),
+    httpTransport(`http://127.0.0.1:${server.address().port}`),
+  );
+  try {
+    openSession(client, '{"user_ref":"ada"}', (...grant) => grants.push(grant));
+    await until(() => requests.length === 1);
+    retry(client);
+    await until(() => grants.length === 1);
+    assert.deepEqual(requests, [
+      ["/sessions", '{"user_ref":"ada"}'],
+      ["/sessions", '{"user_ref":"ada"}'],
+    ]);
+    assert.deepEqual(grants, [
+      [true, '{"session":{"id":"issued"},"token":"t"}'],
+    ]);
+    retry(client);
+    await new Promise((r) => setTimeout(r, 50));
+    assert.equal(requests.length, 2);
+  } finally {
+    stop(client);
+    server.closeAllConnections();
+    await new Promise((r) => server.close(r));
   }
 });

@@ -19,6 +19,23 @@ pub type Session {
   )
 }
 
+/// What a writer states about a session before the server issues its id.
+pub type Metadata {
+  Metadata(user_ref: String, build: String, contract: String, platform: String)
+}
+
+/// A session the server opened, with the capability to append to it. Only the
+/// writer that opened the session holds the token; a batch must present it.
+pub type Grant {
+  Grant(session: Session, token: String)
+}
+
+/// One batch presented with its session's write token. The token is never part
+/// of the batch, so stored and read batches cannot reveal it.
+pub type Upload {
+  Upload(token: String, batch: Batch)
+}
+
 pub type Event {
   Event(kind: String, payload: String)
 }
@@ -44,6 +61,35 @@ pub const max_bytes = 1_048_576
 
 pub const max_entries = 128
 
+/// The largest encoded upload: a full batch plus its write token.
+pub const max_upload_bytes = 1_049_088
+
+pub fn session(id: String, metadata: Metadata) -> Session {
+  Session(
+    id,
+    metadata.user_ref,
+    metadata.build,
+    metadata.contract,
+    metadata.platform,
+  )
+}
+
+pub fn metadata(session: Session) -> Metadata {
+  Metadata(session.user_ref, session.build, session.contract, session.platform)
+}
+
+pub fn validate_metadata(metadata: Metadata) -> Result(Nil, Error) {
+  case
+    valid_text(metadata.user_ref)
+    && valid_text(metadata.build)
+    && valid_text(metadata.contract)
+    && valid_text(metadata.platform)
+  {
+    True -> Ok(Nil)
+    False -> Error(InvalidSession)
+  }
+}
+
 pub fn origin(session: Session) -> retrace.Origin {
   retrace.Origin(session.id, session.contract)
 }
@@ -66,10 +112,7 @@ fn valid_text(value: String) -> Bool {
 pub fn validate(batch: Batch) -> Result(Nil, Error) {
   case
     valid_id(batch.session.id)
-    && valid_text(batch.session.user_ref)
-    && valid_text(batch.session.build)
-    && valid_text(batch.session.contract)
-    && valid_text(batch.session.platform)
+    && validate_metadata(metadata(batch.session)) == Ok(Nil)
     && batch.checkpoint.origin == origin(batch.session)
   {
     False -> Error(InvalidSession)
@@ -131,7 +174,19 @@ pub fn session_json(session: Session) -> json.Json {
 }
 
 pub fn encode(batch: Batch) -> String {
+  json.object(batch_fields(batch)) |> json.to_string
+}
+
+pub fn encode_upload(upload: Upload) -> String {
   json.object([
+    #("token", json.string(upload.token)),
+    ..batch_fields(upload.batch)
+  ])
+  |> json.to_string
+}
+
+fn batch_fields(batch: Batch) -> List(#(String, json.Json)) {
+  [
     #("format", json.int(1)),
     #("session", session_json(batch.session)),
     #(
@@ -153,8 +208,60 @@ pub fn encode(batch: Batch) -> String {
         ])
       }),
     ),
+  ]
+}
+
+pub fn encode_metadata(metadata: Metadata) -> String {
+  json.object([
+    #("user_ref", json.string(metadata.user_ref)),
+    #("build", json.string(metadata.build)),
+    #("contract", json.string(metadata.contract)),
+    #("platform", json.string(metadata.platform)),
   ])
   |> json.to_string
+}
+
+pub fn decode_metadata(input: String) -> Result(Metadata, Error) {
+  let decoder = {
+    use user_ref <- decode.field("user_ref", decode.string)
+    use build <- decode.field("build", decode.string)
+    use contract <- decode.field("contract", decode.string)
+    use platform <- decode.field("platform", decode.string)
+    decode.success(Metadata(user_ref, build, contract, platform))
+  }
+  use metadata <- result.try(
+    json.parse(input, decoder) |> result.map_error(fn(_) { MalformedEnvelope }),
+  )
+  use _ <- result.try(validate_metadata(metadata))
+  Ok(metadata)
+}
+
+pub fn encode_grant(grant: Grant) -> String {
+  json.object([
+    #("session", session_json(grant.session)),
+    #("token", json.string(grant.token)),
+  ])
+  |> json.to_string
+}
+
+/// Decode a grant and check that its id and token are well formed.
+pub fn decode_grant(input: String) -> Result(Grant, Error) {
+  let decoder = {
+    use session <- decode.field("session", session_decoder())
+    use token <- decode.field("token", decode.string)
+    decode.success(Grant(session, token))
+  }
+  use grant <- result.try(
+    json.parse(input, decoder) |> result.map_error(fn(_) { MalformedEnvelope }),
+  )
+  case
+    valid_id(grant.session.id)
+    && valid_id(grant.token)
+    && validate_metadata(metadata(grant.session)) == Ok(Nil)
+  {
+    True -> Ok(grant)
+    False -> Error(InvalidSession)
+  }
 }
 
 pub fn session_decoder() -> decode.Decoder(Session) {
@@ -189,29 +296,54 @@ pub fn decode_batch(input: String) -> Result(Batch, Error) {
   case string.byte_size(input) > max_bytes {
     True -> Error(TooLarge)
     False -> {
-      let decoder = {
-        use format <- decode.field("format", decode.int)
-        use session <- decode.field("session", session_decoder())
-        use checkpoint <- decode.field(
-          "checkpoint",
-          checkpoint_decoder(origin(session)),
-        )
-        use entries <- decode.field(
-          "entries",
-          decode.list(entry_decoder(origin(session))),
-        )
-        case format {
-          1 -> decode.success(Batch(session, checkpoint, entries))
-          _ ->
-            decode.failure(Batch(session, checkpoint, []), "retrace format 1")
-        }
-      }
       use batch <- result.try(
-        json.parse(input, decoder)
+        json.parse(input, batch_decoder())
         |> result.map_error(fn(_) { MalformedEnvelope }),
       )
       use _ <- result.try(validate(batch))
       Ok(batch)
     }
+  }
+}
+
+/// Decode an upload. The batch is validated as `decode_batch` does, and a token
+/// that is not a well-formed capability is malformed.
+pub fn decode_upload(input: String) -> Result(Upload, Error) {
+  case string.byte_size(input) > max_upload_bytes {
+    True -> Error(TooLarge)
+    False -> {
+      let decoder = {
+        use token <- decode.field("token", decode.string)
+        use batch <- decode.then(batch_decoder())
+        decode.success(Upload(token, batch))
+      }
+      use upload <- result.try(
+        json.parse(input, decoder)
+        |> result.map_error(fn(_) { MalformedEnvelope }),
+      )
+      use _ <- result.try(case valid_id(upload.token) {
+        True -> Ok(Nil)
+        False -> Error(MalformedEnvelope)
+      })
+      use _ <- result.try(validate(upload.batch))
+      Ok(upload)
+    }
+  }
+}
+
+fn batch_decoder() -> decode.Decoder(Batch) {
+  use format <- decode.field("format", decode.int)
+  use session <- decode.field("session", session_decoder())
+  use checkpoint <- decode.field(
+    "checkpoint",
+    checkpoint_decoder(origin(session)),
+  )
+  use entries <- decode.field(
+    "entries",
+    decode.list(entry_decoder(origin(session))),
+  )
+  case format {
+    1 -> decode.success(Batch(session, checkpoint, entries))
+    _ -> decode.failure(Batch(session, checkpoint, []), "retrace format 1")
   }
 }
