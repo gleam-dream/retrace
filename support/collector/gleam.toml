@@ -3,8 +3,9 @@ version = "0.1.1"
 target = "erlang"
 
 [dependencies]
-retrace = ">= 0.1.0 and < 0.2.0"
-retrace_server = ">= 0.1.0 and < 0.2.0"
+# Unreleased server-issued session identity; replace with Hex versions at release.
+retrace = { git = "https://github.com/gleam-dream/retrace.git", ref = "396efbbb976a567785fb85ecf1e3c41c6bf3d63f" }
+retrace_server = { git = "https://github.com/gleam-dream/retrace.git", ref = "396efbbb976a567785fb85ecf1e3c41c6bf3d63f", path = "packages/retrace_server" }
 gleam_stdlib = ">= 1.0.0 and < 2.0.0"
 gleam_json = ">= 3.1.0 and < 4.0.0"
 gleam_erlang = ">= 1.0.0 and < 2.0.0"
