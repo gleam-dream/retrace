@@ -141,6 +141,7 @@
       #when[the page becomes hidden or navigates away]
       #then[those batches are sent again by a request that outlives the page, in order and within the keepalive budget]
       #then[they remain saved until a matching acknowledgement]
+      #then[capture's open batch is closed first, so it is handed over with them]
     ]
     #behavior(title: "Capture failure stays visible", level: "interface", area: "Capture")[
       #given[the local queue is full or its storage write fails]
@@ -216,11 +217,6 @@
       #then[they are saved and uploaded as one batch whose checkpoint is the model before the first of them]
       #then[the saved count rises by the number of entries once that batch is saved locally]
       #then[a flush or stop saves the open batch at once, and a zero window saves each observation at once]
-    ]
-    #behavior(title: "A leaving page takes the open batch with it", level: "boundary", area: "Capture composition")[
-      #given[an open batch held in a browser page]
-      #when[the page becomes hidden or navigates away]
-      #then[the open batch is saved and handed over with the other unacknowledged batches, before the page can end]
     ]
     #points(
       [Capture coordinates the core recorder and client delivery through immutable state and Lustre effects. Starting takes session metadata and returns the state and a connection effect, and the application maps capture messages into its own message type. The connection effect starts the client and asks the collector to open the session; the client retries that request on its upload schedule until it is answered. Delivery messages are never observed recursively.],
