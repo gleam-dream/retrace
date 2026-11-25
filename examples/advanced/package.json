@@ -16,7 +16,7 @@
     "@tauri-apps/plugin-store": "^2.5.1"
   },
   "devDependencies": {
-    "@tauri-apps/cli": "^2.12.4",
+    "@tauri-apps/cli": "^2.12.6",
     "vite": "^8.3.8",
     "@playwright/test": "1.65.1"
   }
