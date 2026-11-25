@@ -425,6 +425,167 @@ test("a save during a backoff wait does not start another upload attempt", async
   }
 });
 
+// A store that counts how often and how much the runtime reads from it.
+function counting() {
+  const store = memory(),
+    reads = { calls: 0, rows: 0 };
+  return {
+    ...store,
+    reads,
+    all: async () => {
+      const rows = await store.all();
+      reads.calls++;
+      reads.rows += rows.length;
+      return rows;
+    },
+  };
+}
+const acknowledge = async (body) => {
+  const sent = JSON.parse(body);
+  return JSON.stringify({
+    session_id: sent.session.id,
+    ack: sent.checkpoint.sequence + sent.entries.length,
+  });
+};
+
+test("an idle client neither wakes nor repeats its status", async () => {
+  mock.timers.enable({ apis: ["setTimeout"] });
+  const store = counting(),
+    statuses = [];
+  const client = startWith(
+    "queue",
+    10,
+    10000,
+    (...s) => statuses.push(s),
+    async () => store,
+    send(acknowledge),
+  );
+  try {
+    await settle();
+    assert.deepEqual(statuses, [[0, 0, "All saved entries delivered"]]);
+    const reads = store.reads.calls;
+    for (let second = 0; second < 60; second++) {
+      mock.timers.tick(1000);
+      await settle();
+    }
+    assert.equal(store.reads.calls, reads);
+    assert.equal(statuses.length, 1);
+    // Work still starts a pass at once, and each status is reported once.
+    await new Promise((r) => enqueue(client, batch(), r));
+    await settle();
+    await settle();
+    assert.deepEqual(statuses.slice(1), [
+      [1, 0, "Uploading saved recording"],
+      [0, 1, "All saved entries delivered"],
+    ]);
+    assert.equal((await store.all()).length, 0);
+  } finally {
+    stop(client);
+    mock.timers.reset();
+  }
+});
+
+test("draining a backlog reads storage per pass, not per batch", async () => {
+  const store = counting();
+  for (let n = 0; n < 200; n++)
+    await store.put(`inventory:${String(n).padStart(16, "0")}`, batch(n));
+  let acknowledged = 0;
+  const client = startWith(
+    "queue",
+    1000,
+    1000000,
+    (_, ack) => (acknowledged = ack),
+    async () => store,
+    send(acknowledge),
+  );
+  try {
+    await until(() => acknowledged === 200);
+    await until(() => store.reads.calls >= 2);
+    // One read for the backlog and one that finds the queue empty.
+    assert.equal(store.reads.calls, 2);
+    assert.equal(store.reads.rows, 200);
+  } finally {
+    stop(client);
+  }
+});
+
+test("a batch saved while a pass is finishing is uploaded without a timer", async () => {
+  mock.timers.enable({ apis: ["setTimeout"] });
+  const store = memory();
+  let acknowledged = 0,
+    hold = null,
+    reads = 0;
+  const gated = {
+    ...store,
+    // The third read is the one that finds the queue empty after the first
+    // upload; hold its result so a save lands before the pass ends.
+    all: async () => {
+      const rows = await store.all();
+      if (++reads === 3) await new Promise((r) => (hold = r));
+      return rows;
+    },
+  };
+  const client = startWith(
+    "queue",
+    10,
+    10000,
+    (_, ack) => (acknowledged = ack),
+    async () => gated,
+    send(acknowledge),
+  );
+  try {
+    await settle();
+    await new Promise((r) => enqueue(client, batch(0), r));
+    for (let n = 0; n < 5 && !hold; n++) await settle();
+    assert.ok(hold);
+    await new Promise((r) => enqueue(client, batch(1), r));
+    hold();
+    for (let n = 0; n < 5; n++) await settle();
+    assert.equal(acknowledged, 2);
+    assert.equal((await store.all()).length, 0);
+  } finally {
+    stop(client);
+    mock.timers.reset();
+  }
+});
+
+test("the reported queue length follows uploads and discards within one pass", async () => {
+  const store = memory(),
+    statuses = [];
+  await store.put("erased:0000000000000000", batch(0, "erased"));
+  await store.put("erased:0000000000000001", batch(1, "erased"));
+  await store.put("inventory:0000000000000000", batch(0));
+  await store.put("inventory:0000000000000001", batch(1));
+  const client = startWith(
+    "queue",
+    10,
+    10000,
+    (...s) => statuses.push(s),
+    async () => store,
+    send(async (body) => {
+      const sent = JSON.parse(body);
+      if (sent.session.id !== "erased") return acknowledge(body);
+      throw Object.assign(Error("Session erased"), { rejected: true });
+    }),
+  );
+  try {
+    await until(() => statuses.some((s) => s[1] === 2 && s[0] === 0));
+    assert.deepEqual(
+      statuses.map((s) => [s[0], s[1]]),
+      [
+        [4, 0],
+        [2, 0],
+        [2, 0],
+        [1, 1],
+        [0, 2],
+      ],
+    );
+    assert.match(statuses.at(-1)[2], /Rejected recording discarded/);
+  } finally {
+    stop(client);
+  }
+});
+
 test("an unanswered session request is retried before uploads, and its grant reaches the caller once", async () => {
   const requests = [];
   const server = http.createServer((req, res) => {
