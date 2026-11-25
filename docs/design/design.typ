@@ -20,9 +20,6 @@
     pending-entry(title: "Artifact integrity and registry", kind: "ruling", since: "2026-10-11")[
       Artifact digest verification, signing and an atomic manifest registry are recommendations only. The maintained build recipe records provenance and verifies no content.
     ],
-    pending-entry(title: "Client retry and rejected-batch policy", kind: "ruling", since: "2026-10-10")[
-      The client retries on fixed delays and a permanently rejected batch blocks its queue. A quarantine and backoff policy needs an owner decision.
-    ],
     pending-entry(title: "Evidence runs carried over from retired guides", kind: "verify", since: "2026-10-17")[
       The statements on the native desktop check, the Simulator scenario and the physical-phone path describe runs that this review did not repeat. It confirmed only that the retained check files exist.
     ],

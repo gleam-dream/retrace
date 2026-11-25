@@ -13,7 +13,10 @@ test("basic-browser-check", async ({ browser, context, page }) => {
     page.getByRole("status", { name: "Recording delivery" }),
   ).toHaveText("All saved entries delivered");
   await page.getByRole("button", { name: "Receive one", exact: true }).click();
-  await page.waitForTimeout(300);
+  // The example uploads each second's transitions as one batch. Let the first
+  // batch close so the second transition starts its own, with a nonzero
+  // checkpoint that the range reload below needs. The page shows no saved count.
+  await page.waitForTimeout(1300);
   await page.getByRole("button", { name: "Reserve one", exact: true }).click();
   await expect(
     page.getByRole("status", { name: "Recording delivery" }),

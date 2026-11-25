@@ -6,6 +6,7 @@ import lustre/effect.{type Effect}
 import lustre/element.{type Element}
 import lustre/element/html
 import lustre/event
+import retrace/wire
 import retrace_example/api
 import retrace_example/domain
 import retrace_example/local_archive
@@ -28,17 +29,12 @@ type Message {
 }
 
 fn init(_: Nil) -> #(Model, Effect(Message)) {
-  let session =
-    capture.session(
-      api.user_ref(),
-      api.build(),
-      domain.contract,
-      api.platform(),
-    )
+  let metadata =
+    wire.Metadata(api.user_ref(), api.build(), domain.contract, api.platform())
   let live = domain.Model(..domain.initial(), viewport: api.viewport())
   let assert Ok(#(recording, connect)) =
     capture.start(
-      session,
+      metadata,
       client.Config(api.endpoint(), "retrace-example", 2000, 8_388_608),
       case local_archive.selected(), api.platform() {
         True, _ -> local_archive.storage()
@@ -49,6 +45,7 @@ fn init(_: Nil) -> #(Model, Effect(Message)) {
         True -> local_archive.transport()
         False -> client.http_transport(api.endpoint())
       },
+      1000,
     )
   #(
     Model(live, recording, fn() { Nil }),
@@ -127,7 +124,12 @@ fn view(model: Model) -> Element(Message) {
     },
     html.details([attribute.class("capture-debug")], [
       html.summary([], [html.text("Recording status")]),
-      html.p([attribute.class("session-id")], [html.text(recording.session.id)]),
+      html.p([attribute.class("session-id")], [
+        html.text(case recording.session {
+          Some(session) -> session.id
+          None -> ""
+        }),
+      ]),
       html.p([attribute.class("delivery")], [
         html.text(recording.delivery.detail),
       ]),

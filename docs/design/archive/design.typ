@@ -8,6 +8,7 @@
     #goal(title: "Erase a session on caller authority")[A caller-authorized #term("term-deletion-fence") stops admission, archival, search and reads for a session, and the caller drives deletion of its objects and recording rows.]
     #no-goal(title: "A hardened hosted service")[Authentication, tenant isolation, rate limits, archive repair and a versioned migration system belong to the deployment. The development collector binds to loopback and is not a service configuration.]
     #invariant(title: "A committed batch outlives every archival failure", enforcement: "mechanism")[A failed upload, failed verification or dead worker leaves the database copy readable and eligible for retry.]
+    #invariant(title: "Only a session's writer appends to it", enforcement: "mechanism")[The server opens every session, choosing its identifier and issuing a write token whose digest it stores. Admission refuses an upload whose token does not match its session's, or whose session was never opened, and leaves that session unchanged. #adr(22)]
     #invariant(title: "Admission is ordered per session", enforcement: "mechanism")[A batch is admitted only when its checkpoint matches the session's #term("term-admission-cursor") and its fixed session metadata agrees with the stored metadata.]
     #invariant(title: "Original batch identity survives archival", enforcement: "mechanism")[A #term("term-batch-receipt") retains the original range and digest after the database payload is removed, so an exact retry returns the original acknowledgement.]
     #invariant(title: "A fenced session never becomes readable again", enforcement: "mechanism")[Admission, archival, search and reads refuse a fenced session, including a late object write that finishes after its worker died.]
@@ -25,6 +26,12 @@
       #when[a caller retries its range]
       #then[identical content returns the same acknowledgement and different content is refused]
     ]
+    #behavior(title: "An unproven upload changes nothing", level: "boundary", area: "Admission")[
+      #given[an open session]
+      #when[an upload names it with another token, or names a session that was never opened]
+      #then[admission refuses the upload as unauthorized]
+      #then[the session's admission cursor and records are unchanged, so its writer's next batch is admitted]
+    ]
     #behavior(title: "Session admission is ordered and atomic", level: "boundary", area: "Admission")[
       #given[a session with an #term("term-admission-cursor")]
       #when[a new batch is admitted]
@@ -32,6 +39,7 @@
       #then[an admitted batch and the session index advance together]
     ]
     #points(
+      [Opening a session creates its record at sequence zero with the caller's metadata. The host authenticates the caller first and chooses the user reference from that authentication where it matters. A collector answers an unproven upload as it answers a missing session, so a refusal reveals nothing about other sessions.],
       [Admission locks the session row inside a transaction. The initial checkpoint starts at sequence zero. Out-of-order batches are refused. #adr(1)],
       [A previously accepted batch is identified by session and starting sequence. Its digest permits exact retry checks after its database payload is removed. Different chunking is a conflict, never automatic deduplication.],
       [A host that must authorize or account atomically with admission calls the in-transaction admission and fence operations inside its own database transaction. Those operations neither begin nor commit a transaction, because nesting a transaction would commit the outer one unexpectedly.],
@@ -148,6 +156,7 @@
       )[
         #attribute(name: "Fixed metadata", type: "Session metadata", provenance: "authored")[the identifier, user reference, build, platform and replay contract that every later batch must agree with]
         #attribute(name: "Admission cursor", type: "Sequence number", provenance: "derived")[the highest committed sequence, advanced with each admitted batch under the session lock]
+        #attribute(name: "Write token digest", type: "Digest", provenance: "derived")[the digest of the write token issued when the session was opened, which every upload must match]
         #relates(cardinality: "1 : n")[retains many *Batch receipts*]
         #relates(cardinality: "1 : n")[is archived in many *Archive generations*]
       ]
@@ -286,7 +295,7 @@
     #points(
       [The three operations are the contract between the packaged client, the viewer and any collector that serves them. A collector may add operations, and it may not change or remove these. #adr(18)],
       [A collector authorizes callers and scopes tenants itself, because the server package does not. The development collector scopes no tenants, binds to loopback, admits browsers only from an origin allow-list, accepts an optional bearer token and stays outside the hosted-deployment policy. #adr(21)],
-      [Refusals reach callers as distinguishable categories: conflicting, invalid, oversized, erased session and unavailable storage. The client's handling of each category belongs to the separate client retry and rejected-batch ruling.],
+      [Refusals reach callers as distinguishable categories: conflicting, invalid, oversized, erased session and unavailable storage. The recording context defines how the client handles each category.],
     )
   ])
   #section(title: "Hosting and storage ownership", lead: "The server package borrows its resources, and the development collector is the example host.", body: [

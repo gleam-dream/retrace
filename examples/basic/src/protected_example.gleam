@@ -8,6 +8,7 @@ import lustre/element/html as h
 import protected_example/live
 import protected_example/observation
 import protected_example/screen
+import retrace/wire
 import retrace_frontend/capture
 import retrace_frontend/client
 
@@ -22,8 +23,8 @@ type Message {
 }
 
 fn init(_: Nil) -> #(Model, effect.Effect(Message)) {
-  let session =
-    capture.session(
+  let metadata =
+    wire.Metadata(
       "Protected demo",
       observation.build,
       observation.contract,
@@ -31,10 +32,13 @@ fn init(_: Nil) -> #(Model, effect.Effect(Message)) {
     )
   let assert Ok(#(recording, connect)) =
     capture.start(
-      session,
+      metadata,
       client.Config("http://127.0.0.1:4417", "protected-outbox", 100, 1_048_576),
       client.browser_storage(),
       client.http_transport("http://127.0.0.1:4417"),
+      // No window: each observation is its own batch, so every upload body
+      // can be checked for private values on its own.
+      0,
     )
   #(Model(live.initial(), recording), effect.map(connect, Recording))
 }
@@ -102,7 +106,10 @@ fn view(model: Model) -> element.Element(Message) {
         [
           a.href(
             "/protected-viewer.html?user=Protected%20demo&session="
-            <> info.session.id,
+            <> case info.session {
+              Some(session) -> session.id
+              None -> ""
+            },
           ),
         ],
         [h.text("Inspect protected recording")],

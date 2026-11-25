@@ -261,7 +261,11 @@ fn failed(error: retrace_server.Error) -> Response(mist.ResponseData) {
   let status = case error {
     retrace_server.Conflict | retrace_server.OutOfOrder(_, _) -> 409
     retrace_server.InvalidBatch(_) -> 400
-    retrace_server.NotFound | retrace_server.Deleted -> 404
+    // An upload that cannot prove its session gets the same answer as a
+    // missing session, so a refusal does not reveal which sessions exist.
+    retrace_server.NotFound
+    | retrace_server.Deleted
+    | retrace_server.Unauthorized -> 404
     retrace_server.Database(_)
     | retrace_server.Storage(_)
     | retrace_server.UnsupportedSchema(_)
@@ -275,7 +279,7 @@ fn failed(error: retrace_server.Error) -> Response(mist.ResponseData) {
         "error",
         json.string(case status {
           409 -> "Recording conflicts with the stored session"
-          400 -> "Invalid recording batch"
+          400 -> "Invalid recording request"
           404 -> "Session not found"
           _ -> "Recording storage is unavailable"
         }),
@@ -336,6 +340,37 @@ fn read_chunks(
   }
 }
 
+// Reads a bounded JSON body and decodes it before `next` sees it.
+fn read_json(
+  req: Request(mist.Connection),
+  limit: Int,
+  decode: fn(String) -> Result(value, wire.Error),
+  next: fn(value) -> Response(mist.ResponseData),
+) -> Response(mist.ResponseData) {
+  case read_bounded_body(req, limit) {
+    Error(TooLarge) ->
+      reply(413, json.object([#("error", json.string("Body exceeds limit"))]))
+      |> response.set_header("connection", "close")
+    Error(LengthRequired) ->
+      reply(
+        411,
+        json.object([#("error", json.string("Body needs a Content-Length"))]),
+      )
+      |> response.set_header("connection", "close")
+    Error(Unreadable) ->
+      failed(retrace_server.InvalidBatch(wire.MalformedEnvelope))
+    Ok(body) ->
+      case
+        bit_array.to_string(body)
+        |> result.map_error(fn(_) { wire.MalformedEnvelope })
+        |> result.try(decode)
+      {
+        Error(reason) -> failed(retrace_server.InvalidBatch(reason))
+        Ok(value) -> next(value)
+      }
+  }
+}
+
 fn route(
   db: pog.Connection,
   store: ObjectStore,
@@ -344,45 +379,32 @@ fn route(
   case req.method, string.split(req.path, "/") {
     http.Get, ["", "health"] ->
       reply(200, json.object([#("ok", json.bool(True))]))
+    http.Post, ["", "sessions"] ->
+      read_json(req, 4096, wire.decode_metadata, fn(metadata) {
+        case retrace_server.open(db, metadata) {
+          Error(reason) -> failed(reason)
+          Ok(grant) ->
+            response.new(201)
+            |> response.set_header("content-type", "application/json")
+            |> response.set_body(mist.Bytes(
+              wire.encode_grant(grant) |> bytes_tree.from_string,
+            ))
+        }
+      })
     http.Post, ["", "batches"] ->
-      case read_bounded_body(req, wire.max_bytes) {
-        Error(TooLarge) ->
-          reply(
-            413,
-            json.object([#("error", json.string("Batch body exceeds limit"))]),
-          )
-          |> response.set_header("connection", "close")
-        Error(LengthRequired) ->
-          reply(
-            411,
-            json.object([
-              #("error", json.string("Batch body needs a Content-Length")),
-            ]),
-          )
-          |> response.set_header("connection", "close")
-        Error(Unreadable) ->
-          failed(retrace_server.InvalidBatch(wire.MalformedEnvelope))
-        Ok(body) ->
-          case
-            bit_array.to_string(body)
-            |> result.map_error(fn(_) { wire.MalformedEnvelope })
-            |> result.try(wire.decode_batch)
-          {
-            Error(reason) -> failed(retrace_server.InvalidBatch(reason))
-            Ok(batch) ->
-              case retrace_server.accept(db, batch) {
-                Error(reason) -> failed(reason)
-                Ok(sequence) ->
-                  reply(
-                    200,
-                    json.object([
-                      #("session_id", json.string(batch.session.id)),
-                      #("ack", json.int(sequence)),
-                    ]),
-                  )
-              }
-          }
-      }
+      read_json(req, wire.max_upload_bytes, wire.decode_upload, fn(upload) {
+        case retrace_server.accept(db, upload) {
+          Error(reason) -> failed(reason)
+          Ok(sequence) ->
+            reply(
+              200,
+              json.object([
+                #("session_id", json.string(upload.batch.session.id)),
+                #("ack", json.int(sequence)),
+              ]),
+            )
+        }
+      })
     http.Get, ["", "sessions"] ->
       case retrace_server.sessions(db, query(req, "user")) {
         Error(reason) -> failed(reason)

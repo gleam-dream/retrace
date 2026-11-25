@@ -93,14 +93,17 @@ codecs, update function and view. Import `retrace_frontend/capture` and
 
 <!-- snips: examples/basic/src/retrace_inventory.gleam#capture-start -->
 ```gleam
-let session =
-  capture.session("Warehouse", domain.build, domain.contract, "web")
+// The collector chooses the session id when it opens the session.
+let metadata =
+  wire.Metadata("Warehouse", domain.build, domain.contract, "web")
 let assert Ok(#(recording, connect)) =
   capture.start(
-    session,
+    metadata,
     client.Config("http://127.0.0.1:4417", "basic-outbox", 100, 1_048_576),
     client.browser_storage(),
     client.http_transport("http://127.0.0.1:4417"),
+    // Upload the transitions of each second together, as one batch.
+    1000,
   )
 ```
 
@@ -195,8 +198,11 @@ replay artifacts and custom adapters.
   different code is not a faithful reconstruction of the recorded application.
 - The development collector is unauthenticated and loopback-bound. A deployed
   host must supply authentication, tenant isolation, consent and retention policy.
-- Monitor persistence and delivery status. A permanently rejected batch can
-  block later batches; the application owns outbox and durable-cursor recovery.
+- The collector, not the client, chooses each session id and issues a write
+  token with it. Only the writer that opened a session can append to it.
+- Monitor persistence and delivery status. When the collector permanently
+  rejects a session, the client discards that session's saved batches and
+  delivers the others; the application owns outbox and durable-cursor recovery.
 - Erasure needs host evidence that uncertain uploads can no longer publish.
   Live tailing, event search and analytics are outside the implemented scope.
 

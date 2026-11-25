@@ -2,7 +2,7 @@ import { Row } from "./adapter.mjs";
 
 // The client owns request deadlines. Storage has no cancellation signal because
 // admitted writes/deletions must settle, even after client shutdown.
-function request(task, explain, signal) {
+function request(task, explain, signal, rejected) {
   return new Promise((resolve, reject) => {
     let settled = false;
     let cancel;
@@ -37,7 +37,11 @@ function request(task, explain, signal) {
         cleanup();
         try {
           if (result.isOk()) resolve(result[0]);
-          else reject(Error(explain(result[0])));
+          else {
+            const error = Error(explain(result[0]));
+            error.rejected = rejected?.(result[0]) === true;
+            reject(error);
+          }
         } catch (error) {
           reject(error);
         }
@@ -63,8 +67,11 @@ export const storage = (open, explain) => async (name, items, bytes) => {
   };
 };
 
-export const transport = (send, explain) => async (body, signal) => {
-  // Do not even ask the provider to construct work after a prior abort.
-  if (signal.aborted) throw Error("Upload cancelled");
-  return request(send(body), explain, signal);
+export const transport = (open, send, explain, rejected) => {
+  const call = (operation) => async (body, signal) => {
+    // Do not even ask the provider to construct work after a prior abort.
+    if (signal.aborted) throw Error("Upload cancelled");
+    return request(operation(body), explain, signal, rejected);
+  };
+  return { open: call(open), send: call(send) };
 };

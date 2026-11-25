@@ -19,6 +19,28 @@ test("protected replay preserves decisions when seeking and has no live capabili
       return put.call(this, row, ...rest);
     };
   });
+  // The stand-in collector opens one session and acknowledges its uploads.
+  await page.route("http://127.0.0.1:4417/sessions", async (route) => {
+    if (route.request().method() === "OPTIONS") {
+      return route.fulfill({
+        headers: {
+          "access-control-allow-origin": "*",
+          "access-control-allow-methods": "POST, OPTIONS",
+          "access-control-allow-headers": "content-type",
+        },
+      });
+    }
+    const metadata = JSON.parse(route.request().postData());
+    await route.fulfill({
+      status: 201,
+      contentType: "application/json",
+      headers: { "access-control-allow-origin": "*" },
+      body: JSON.stringify({
+        session: { id: "protected-browser", ...metadata },
+        token: "protected-browser-token",
+      }),
+    });
+  });
   await page.route("http://127.0.0.1:4417/batches", async (route) => {
     if (route.request().method() === "OPTIONS") {
       return route.fulfill({

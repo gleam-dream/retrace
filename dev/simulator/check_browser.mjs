@@ -5,8 +5,8 @@ import {
 } from "../../examples/advanced/node_modules/@playwright/test/index.mjs";
 import { mkdir, writeFile } from "node:fs/promises";
 const id = process.argv[2];
-if (!id || !/^[a-f0-9-]{36}$/.test(id))
-  throw Error("Pass the Simulator session UUID");
+if (!id || !/^[A-Za-z0-9_-]{1,128}$/.test(id))
+  throw Error("Pass the Simulator session id");
 const endpoint = `http://127.0.0.1:4417/sessions/${id}/batches`,
   before = await (await fetch(endpoint)).json(),
   batches = before.map(JSON.parse),

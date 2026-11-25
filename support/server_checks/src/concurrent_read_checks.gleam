@@ -4,6 +4,7 @@ import gleam/erlang/process
 import gleam/int
 import gleam/io
 import gleam/list
+import opened
 import pog
 import retrace
 import retrace/wire
@@ -40,16 +41,10 @@ fn wrong_digest() -> BitArray
 fn monotonic_ms() -> Int
 
 pub fn run(db: pog.Connection, store: server.ObjectStore) -> Nil {
-  let session =
-    wire.Session(
-      "parallel-pages",
-      "parallel-reader",
-      "counter-v1",
-      "counter-v1",
-      "erlang",
-    )
+  let grant = opened.grant(db, "parallel-reader")
+  let session = grant.session
   let assert Ok(#(recorder, _)) = retrace.start(wire.origin(session), "0")
-  let expected = append(db, session, recorder, 513)
+  let expected = append(db, grant, recorder, 513)
   // Keep the final batch pending: a page can combine archived and inline data.
   list.each(list.repeat(Nil, 512), fn(_) {
     let assert Ok(True) = server.archive_next(db, store)
@@ -124,7 +119,7 @@ fn pages(
 
 fn append(
   db: pog.Connection,
-  session: wire.Session,
+  grant: wire.Grant,
   recorder: retrace.Recorder,
   remaining: Int,
 ) -> List(wire.Batch) {
@@ -134,24 +129,18 @@ fn append(
       let checkpoint = retrace.checkpoint(recorder, "0")
       let assert Ok(#(next, entry)) =
         retrace.record(recorder, wire.Event("Add", int.to_string(remaining)), 5)
-      let batch = wire.Batch(session, checkpoint, [entry])
-      let assert Ok(_) = server.accept(db, batch)
-      [batch, ..append(db, session, next, remaining - 1)]
+      let batch = wire.Batch(grant.session, checkpoint, [entry])
+      let assert Ok(_) = server.accept(db, wire.Upload(grant.token, batch))
+      [batch, ..append(db, grant, next, remaining - 1)]
     }
   }
 }
 
 fn deletion_check(db: pog.Connection, store: server.ObjectStore) -> Nil {
-  let session =
-    wire.Session(
-      "read-fence-race",
-      "parallel-reader",
-      "counter-v1",
-      "counter-v1",
-      "erlang",
-    )
+  let grant = opened.grant(db, "parallel-reader")
+  let session = grant.session
   let assert Ok(#(recorder, _)) = retrace.start(wire.origin(session), "0")
-  let _ = append(db, session, recorder, 1)
+  let _ = append(db, grant, recorder, 1)
   // Archive the pending tail of the first session, then this scenario's batch.
   let assert Ok(True) = server.archive_next(db, store)
   let assert Ok(True) = server.archive_next(db, store)
@@ -175,7 +164,7 @@ fn deletion_check(db: pog.Connection, store: server.ObjectStore) -> Nil {
   let assert Ok(_) = server.fence(db, session.id)
   process.send(release, Nil)
   let assert Ok(Error(server.Deleted)) = process.receive(completed, 3000)
-  let assert Ok(_) = store.get("sessions/read-fence-race/0.json.gz")
+  let assert Ok(_) = store.get(opened.key(session, "0"))
   Nil
 }
 

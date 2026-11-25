@@ -19,7 +19,9 @@ test("composition-browser-check", async ({ browser, context, page }) => {
   );
   const id = await page.locator(".session-id").textContent();
   await page.getByRole("button", { name: "Add a point", exact: true }).click();
-  await page.waitForTimeout(300);
+  // Capture batches each flush window; wait for the first batch to be saved so
+  // the second transition starts its own batch, with a nonzero checkpoint.
+  await expect(page.locator("[data-saved]")).toHaveAttribute("data-saved", "1");
   await page
     .getByRole("button", { name: "Record an unchanged state", exact: true })
     .click();
