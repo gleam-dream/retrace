@@ -48,7 +48,7 @@ xcodebuild test -quiet \
   -destination 'platform=iOS Simulator,name=iPhone 17 Pro' \
   -parallel-testing-enabled NO \
   -derivedDataPath .artifacts/simulator-check/derived
-node dev/simulator/check_browser.mjs SESSION_UUID
+node dev/simulator/check_browser.mjs SESSION_ID
 ```
 
 Evidence and limits are specified in the [design](../../docs/design/design-layer.pdf).

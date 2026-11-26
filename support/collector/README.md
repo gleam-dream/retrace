@@ -1,5 +1,11 @@
 # Collector host
 
+> **Version 0.2.0 is a breaking release.** See the [migration guide](https://github.com/gleam-dream/retrace/blob/main/docs/MIGRATION.md).
+>
+> - `POST /sessions` opens a session and answers with its write token.
+> - `POST /batches` takes an upload, the batch plus `token`, and answers an unproven upload `404`.
+> - A 0.1.x frontend cannot upload to it, and a 0.2.0 frontend cannot use a 0.1.x collector.
+
 [![CI](https://github.com/gleam-dream/retrace/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/gleam-dream/retrace/actions/workflows/ci.yml)
 [![retrace on Hex](https://img.shields.io/hexpm/v/retrace?label=Hex%3A%20retrace)](https://hex.pm/packages/retrace)
 [![Gleam](https://img.shields.io/badge/Gleam-FFAFF3?logo=gleam&logoColor=000000)](https://gleam.run/)

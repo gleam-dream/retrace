@@ -1,5 +1,17 @@
 # Retrace frontend
 
+> **Version 0.2.0 is a breaking release.** It works only with `retrace` 0.2.0 and a 0.2.0
+> collector or `retrace_server`; see the [migration guide](https://github.com/gleam-dream/retrace/blob/main/docs/MIGRATION.md).
+>
+> - `capture.start` takes `wire.Metadata` and a flush window; `capture.session` and
+>   `capture.with_batching` are removed, and capture uploads only in batches.
+> - The collector opens the session and issues the write token; `client.enqueue` takes a
+>   `wire.Upload`, and a transport has `open` and `send` operations.
+> - A rejected session is discarded and failed uploads back off; `adapter.transport` takes `rejected`.
+> - Unacknowledged batches are handed over when the page is hidden or closed, if the
+>   transport provides a `keepalive` send (the packaged HTTP transport does; `adapter.transport`
+>   does not, and its batches stay queued for the normal upload loop).
+
 [![CI](https://github.com/gleam-dream/retrace/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/gleam-dream/retrace/actions/workflows/ci.yml)
 [![retrace_frontend on Hex](https://img.shields.io/hexpm/v/retrace_frontend?label=Hex%3A%20retrace_frontend)](https://hex.pm/packages/retrace_frontend)
 [![Gleam](https://img.shields.io/badge/Gleam-FFAFF3?logo=gleam&logoColor=000000)](https://gleam.run/)

@@ -1,5 +1,12 @@
 //// JavaScript delivery runtime. Capture and application updates remain separate.
 //// The host owns start/stop; saved batches drain across runtime restarts.
+////
+//// The client asks the collector to open a session, then uploads saved batches
+//// oldest first. A failed pass keeps its batch and waits before the next one,
+//// from 1.5 seconds doubling to 60. A refusal that a retry cannot change makes
+//// the client discard that session's saved batches. An idle client holds no
+//// timer. In a browser, a page that becomes hidden or navigates away hands its
+//// unacknowledged batches to the transport's keepalive send.
 
 import retrace/wire
 
