@@ -8,7 +8,9 @@
 > - The collector opens the session and issues the write token; `client.enqueue` takes a
 >   `wire.Upload`, and a transport has `open` and `send` operations.
 > - A rejected session is discarded and failed uploads back off; `adapter.transport` takes `rejected`.
-> - Unacknowledged batches are handed over when the page is hidden or closed.
+> - Unacknowledged batches are handed over when the page is hidden or closed, if the
+>   transport provides a `keepalive` send (the packaged HTTP transport does; `adapter.transport`
+>   does not, and its batches stay queued for the normal upload loop).
 
 [![CI](https://github.com/gleam-dream/retrace/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/gleam-dream/retrace/actions/workflows/ci.yml)
 [![retrace_frontend on Hex](https://img.shields.io/hexpm/v/retrace_frontend?label=Hex%3A%20retrace_frontend)](https://hex.pm/packages/retrace_frontend)

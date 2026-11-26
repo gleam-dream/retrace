@@ -125,7 +125,9 @@ These behaviors change without any code change on your side.
   that does not fit is sent until the queue has drained. The collector admits a repeated batch
   idempotently, and every batch stays queued until its acknowledgement. Hosts that call
   `client.stop` on `pagehide`, as the examples do, abort only the regular upload, not the
-  hand-over.
+  hand-over. The packaged HTTP transport provides the `keepalive` send; a transport built with
+  `adapter.transport` does not, so the client hands it nothing and its batches stay queued
+  for the normal upload loop.
 - **A cross-origin collector** must answer the preflight of the keepalive request as it does
   for the regular upload.
 
@@ -246,7 +248,11 @@ packaged `client.http_transport` still sends none, so use a custom transport as 
 - **Existing database.** `migrate` adds a nullable `write_digest` column to `retrace_sessions`
   and changes nothing else. Run it before the new host takes uploads. Sessions stored by
   0.1.x have no digest, so they accept no further batches (`Unauthorized`). Their stored
-  batches are unchanged. Archive and erasure operations are unchanged.
+  batches are unchanged. Archive and erasure operations are unchanged. The `retrace_server`
+  0.1.0 schema already satisfies `migrate`'s schema check, so this step succeeds on a 0.1.0
+  database. A database from an earlier draft, whose `retrace_tombstones` table has no
+  `checked_at` column, is refused with `UnsupportedSchema` before any statement runs and
+  stays unchanged. It has no upgrade path: start from an empty database.
 - **Empty sessions.** An `open` whose reply is lost leaves a session with no batch. Listings omit it.
 - **Session ids** are 22-character URL-safe strings, not UUIDs. Code that assumes the UUID format must
   accept any valid id (`wire.valid_id`).
