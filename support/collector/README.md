@@ -14,6 +14,20 @@ An unpublished development host for the collector protocol, backed by PostgreSQL
 and an S3-compatible store. It binds to loopback and has no tenant isolation.
 Applications own hosted deployment policy.
 
+## Installation
+
+The collector is not on Hex. Take it from its Git tag, with the core and server
+from Hex:
+
+```toml
+[dependencies]
+retrace = ">= 0.2.0 and < 0.3.0"
+retrace_server = ">= 0.2.0 and < 0.3.0"
+retrace_collector = { git = "https://github.com/gleam-dream/retrace.git", ref = "retrace_collector-v0.2.0", path = "support/collector" }
+```
+
+Commit `gleam.toml` and `manifest.toml` to retain the resolved versions and Git commit.
+
 ## Access
 
 Binding to loopback stops other machines, not web pages open in the developer's

@@ -94,8 +94,8 @@ retrace = ">= 0.2.0 and < 0.3.0"
 retrace_server = ">= 0.2.0 and < 0.3.0"
 ```
 
-The unpublished [development collector](support/collector/README.md) uses Git+path
-alongside these Hex packages.
+The unpublished [development collector](support/collector/README.md) installs from
+its Git tag `retrace_collector-v0.2.0` alongside these Hex packages.
 
 Commit `gleam.toml` and `manifest.toml` to retain the resolved versions.
 The [core-only example](examples/basic/src/usage_core.gleam)
