@@ -113,9 +113,7 @@ import tomllib
 with open(sys.argv[1], "rb") as source:
     packages = {package["name"]: package for package in tomllib.load(source)["packages"]}
 assert packages["retrace"]["source"] == "hex", "Git collector replaced Hex retrace"
-# retrace_server 0.2.0 is not on Hex yet, so the collector takes it from the same
-# revision. Require Hex here too once the collector depends on the Hex range.
-assert packages["retrace_server"]["source"] == "git", packages["retrace_server"]
-print("Git collector retains published Hex retrace and its own revision's retrace_server")
+assert packages["retrace_server"]["source"] == "hex", "Git collector replaced Hex retrace_server"
+print("Git collector retains published Hex retrace and retrace_server")
 PY
 printf 'Git consumers passed: %s at %s\n' "$repository" "$revision"
