@@ -18,10 +18,12 @@ background process.
 
 ## Install
 
-Add the server and core packages from Hex:
+Add the server and core packages from Hex to `gleam.toml`:
 
-```sh
-gleam add retrace retrace_server
+```toml
+[dependencies]
+retrace = ">= 0.2.0 and < 0.3.0"
+retrace_server = ">= 0.2.0 and < 0.3.0"
 ```
 
 Commit `gleam.toml` and `manifest.toml` to retain the resolved versions.

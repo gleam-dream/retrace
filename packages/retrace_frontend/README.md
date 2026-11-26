@@ -37,10 +37,12 @@ viewer, worker or network request, and a browser-only build needs no Tauri plugi
 
 ## Install
 
-Add the frontend and core packages from Hex:
+Add the frontend and core packages from Hex to `gleam.toml`:
 
-```sh
-gleam add retrace retrace_frontend
+```toml
+[dependencies]
+retrace = ">= 0.2.0 and < 0.3.0"
+retrace_frontend = ">= 0.2.0 and < 0.3.0"
 ```
 
 Commit `gleam.toml` and `manifest.toml` to retain the resolved versions.
