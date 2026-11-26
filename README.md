@@ -78,16 +78,20 @@ decisions cannot be recovered. Both strategies require the recording's exact bui
 ## Install
 
 Use Gleam 1.16 or later and add only the packages you import from Hex.
-A browser or Tauri application typically starts with:
+A browser or Tauri application typically starts with these lines in `gleam.toml`:
 
-```sh
-gleam add retrace retrace_frontend
+```toml
+[dependencies]
+retrace = ">= 0.2.0 and < 0.3.0"
+retrace_frontend = ">= 0.2.0 and < 0.3.0"
 ```
 
 A backend uses the core and server packages:
 
-```sh
-gleam add retrace retrace_server
+```toml
+[dependencies]
+retrace = ">= 0.2.0 and < 0.3.0"
+retrace_server = ">= 0.2.0 and < 0.3.0"
 ```
 
 The unpublished [development collector](support/collector/README.md) uses Git+path

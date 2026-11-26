@@ -3,8 +3,8 @@ version = "0.1.1"
 target = "erlang"
 
 [dependencies]
-# Unreleased server-issued session identity; replace with Hex versions at release.
-retrace = { path = "../.." }
+retrace = ">= 0.2.0 and < 0.3.0"
+# retrace_server 0.2.0 is not on Hex yet; replace with ">= 0.2.0 and < 0.3.0" once it is.
 retrace_server = { path = "../../packages/retrace_server" }
 gleam_stdlib = ">= 1.0.0 and < 2.0.0"
 gleam_json = ">= 3.1.0 and < 4.0.0"

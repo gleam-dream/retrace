@@ -90,8 +90,7 @@ name = "retrace_distribution_check"
 version = "0.1.0"
 target = "erlang"
 [dependencies]
-retrace = ">= 0.1.0 and < 0.2.0"
-retrace_server = ">= 0.1.0 and < 0.2.0"
+retrace = ">= 0.2.0 and < 0.3.0"
 retrace_collector = { git = "$repository", ref = "$revision", path = "support/collector" }
 TOML
 cat > "$consumer_root/collector/src/retrace_distribution_check.gleam" <<'GLEAM'
@@ -113,8 +112,10 @@ import tomllib
 
 with open(sys.argv[1], "rb") as source:
     packages = {package["name"]: package for package in tomllib.load(source)["packages"]}
-for name in ("retrace", "retrace_server"):
-    assert packages[name]["source"] == "hex", f"Git collector replaced Hex {name}"
-print("Git collector retains both published Hex parents")
+assert packages["retrace"]["source"] == "hex", "Git collector replaced Hex retrace"
+# retrace_server 0.2.0 is not on Hex yet, so the collector takes it from the same
+# revision. Require Hex here too once the collector depends on the Hex range.
+assert packages["retrace_server"]["source"] == "git", packages["retrace_server"]
+print("Git collector retains published Hex retrace and its own revision's retrace_server")
 PY
 printf 'Git consumers passed: %s at %s\n' "$repository" "$revision"
