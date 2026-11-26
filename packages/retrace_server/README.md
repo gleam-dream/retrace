@@ -1,5 +1,13 @@
 # Retrace server
 
+> **Version 0.2.0 is a breaking release.** See the [migration guide](https://github.com/gleam-dream/retrace/blob/main/docs/MIGRATION.md).
+>
+> - Sessions are opened with `retrace_server.open`, which returns a write token that only
+>   the writer holds.
+> - `accept` and `accept_in_transaction` take a `wire.Upload` instead of a `wire.Batch`, and an
+>   upload that does not prove its session is `Unauthorized`.
+> - Sessions stored by 0.1.x accept no further batches; run `migrate` to add the token column.
+
 [![CI](https://github.com/gleam-dream/retrace/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/gleam-dream/retrace/actions/workflows/ci.yml)
 [![retrace_server on Hex](https://img.shields.io/hexpm/v/retrace_server?label=Hex%3A%20retrace_server)](https://hex.pm/packages/retrace_server)
 [![Gleam](https://img.shields.io/badge/Gleam-FFAFF3?logo=gleam&logoColor=000000)](https://gleam.run/)

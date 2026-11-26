@@ -1,5 +1,19 @@
 # Retrace
 
+> **Version 0.2.0 is a breaking release** of `retrace`, `retrace_frontend`, `retrace_server`
+> and the development collector. Upgrade them together; see the [migration guide](https://github.com/gleam-dream/retrace/blob/main/docs/MIGRATION.md).
+>
+> - A session is opened with a write token, and only the writer that opened it can append.
+>   `retrace_server.accept` takes a `wire.Upload`, and a batch can no longer create a session.
+> - The frontend uploads only in batches: `capture.start` takes `wire.Metadata` and a flush
+>   window, and `capture.session` and `capture.with_batching` are removed.
+> - The client discards a session the collector rejects and backs off failed uploads;
+>   `adapter.transport` takes `open` and `rejected`.
+> - The client hands unacknowledged batches over when the page is hidden or closed.
+>
+> The core `retrace` package only gains functions in `retrace/wire`; applications that use
+> only the core need no code change.
+
 [![CI](https://github.com/gleam-dream/retrace/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/gleam-dream/retrace/actions/workflows/ci.yml)
 [![retrace on Hex](https://img.shields.io/hexpm/v/retrace?label=Hex%3A%20retrace)](https://hex.pm/packages/retrace)
 [![Gleam](https://img.shields.io/badge/Gleam-FFAFF3?logo=gleam&logoColor=000000)](https://gleam.run/)
